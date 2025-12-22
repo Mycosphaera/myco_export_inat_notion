@@ -581,45 +581,48 @@ if st.session_state.show_selection and st.session_state.search_results:
     
     # 2. Logic: Detect Changes & Trigger Pop-up
     # We compare the current editor state with our session_state to detect NEWLY checked items.
-    # This serves as our "Click to View" mechanism.
     if response is not None and not response.empty:
         # Iterate to find changes
         for index, row in response.iterrows():
-             if '_original_obs' in row:
-                 o_id = row['_original_obs']['id']
+             # Fix TypeError: _original_obs might be stringified by data_editor.
+             # Use the explicit 'ID' column (string) and convert to int.
+             try:
+                 o_id = int(str(row['ID']).replace(",","")) # Remove commas just in case, though we cleaned it
                  is_checked = row['Import']
-                 
-                 # Check if this state is different from known state
-                 # If it goes False -> True, we show details (Preview)
-                 # If it goes True -> False, we just update.
-                 # If it wasn't in state (new load), we treat as no-change unless default?
                  
                  old_state = st.session_state.selection_states.get(o_id, False) # Default to false if unknown
                  
                  if is_checked and not old_state:
                      # This row was JUST checked. Show Details!
-                     # Update state first to avoid loop?
-                     # No, show_details is a dialog.
+                     # For the dialog, we need the full data. 
+                     # We can get it from the original df using the index? 
+                     # Or pass the row if it has the display fields.
+                     # show_details expects dict-like with 'Image', 'Taxon', etc.
+                     # 'row' from iterrows is a Series, which works fine.
                      show_details(row)
                  
                  # Update State
                  st.session_state.selection_states[o_id] = is_checked
+             except ValueError:
+                 pass # Skip if ID issue
 
     # 3. Count total checked (visual feedback)
-    # Re-calculate from robust session state or editor?
-    # Editor is the source of truth for the current render.
     total_checked = int(response['Import'].sum()) if not response.empty else 0
     st.info(f"{total_checked} observations sélectionnées pour l'import.")
     
     if st.button("📤 Importer vers Notion", type="primary"):
-        # Robust Import Logic: Read from Session State (synced above)
-        # OR read directly from response to be safe.
+        # Robust Import Logic
         ids_to_import = []
         if not response.empty:
             checked_rows = response[response['Import'] == True]
             if not checked_rows.empty:
-                # Map back to full objects
-                 checked_ids = set(checked_rows['ID'].astype(str))
+                # Get IDs as strings
+                 checked_ids = set()
+                 for _, r in checked_rows.iterrows():
+                     # Safe conversion
+                     checked_ids.add(str(r['ID']))
+                     
+                 # Filter source list
                  ids_to_import = [
                     obs for obs in st.session_state.search_results 
                     if str(obs['id']) in checked_ids
