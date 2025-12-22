@@ -134,16 +134,28 @@ with tab1:
                 st.info("Aucune date ajoutée.")
 
     st.divider()
+
+    # Limit Selection
+    c_search, c_limit = st.columns([3, 1])
+    limit_option = c_limit.selectbox("Nombre de résultats", [50, 100, 200, 500, "Tout (Attention !)"], index=0)
     
-    if st.button("🔎 Lancer la recherche", type="primary", use_container_width=True):
+    if c_search.button("🔎 Lancer la recherche", type="primary", use_container_width=True):
         user_list = [u.strip() for u in user_input.split(',') if u.strip()]
+        
+        # Determine Limit
+        fetch_limit = 50
+        if isinstance(limit_option, int):
+            fetch_limit = limit_option
+        else:
+            fetch_limit = 10000 # "Tout" -> large number
+            
         params = {
             "user_id": user_list,
             "d1": d1, 
             "d2": d2, 
             "taxon_id": taxon_id, 
             "place_id": selected_place_id,
-            "per_page": 50, # Modulable limit could be added
+            "per_page": 200, # Request max allowed per page
             "detail": "all"
         }
         run_search = True
