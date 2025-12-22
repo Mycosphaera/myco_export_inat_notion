@@ -644,6 +644,7 @@ if st.session_state.show_selection and st.session_state.search_results:
                 # --- DATA EXTRACTION & MAPPING ---
                 user_name = obs.get('user', {}).get('login', '')
                 observed_on = obs.get('time_observed_at')
+                date_iso = observed_on.isoformat() if observed_on else None
                 user_name = obs.get('user', {}).get('name') or obs.get('user', {}).get('login') or "Inconnu"
                 
                 obs_url = obs.get('uri')
