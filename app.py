@@ -686,68 +686,86 @@ if st.session_state.search_results:
                                 {"name": "No Inat", "type": "rich_text"}
                             ]
                     except Exception as e:
-                        st.error(f"Erreur schema Notion: {e}")
+                        st.error(f"Erreur lors de l'analyse du schéma Notion : {e}")
                         target_props = []
 
                     # 2. Chunked Search
-                    chunk_size = 20
-                    for i in range(0, len(ids_to_check), chunk_size):
-                        chunk = ids_to_check[i:i + chunk_size]
+                    # Filter out Formula columns from the SEARCH query (Notion API limitation)
+                    # We can only search in specific types: number, text, url, select, etc.
+                    searchable_props = [p for p in target_props if p['type'] not in ['formula', 'rollup']]
+                    
+                    if not searchable_props:
+                        st.error("❌ Impossible de chercher : La colonne 'No Inat' semble être une formule. L'API Notion ne permet pas de chercher dans les formules. Assurez-vous d'avoir une colonne 'URL' ou 'Texte' contenant le lien ou l'ID.")
+                    else:
+                        chunk_size = 20
+                        # st.info(f"Recherche dans les colonnes : {[p['name'] for p in searchable_props]}") # Debug info
                         
-                        or_filters = []
-                        # Build dynamic filters based on actual columns
-                        for prop in target_props:
-                            p_name = prop['name']
-                            p_type = prop['type']
+                        for i in range(0, len(ids_to_check), chunk_size):
+                            chunk = ids_to_check[i:i + chunk_size]
                             
-                            for cid in chunk:
-                                if p_type == "url":
-                                    or_filters.append({"property": p_name, "url": {"contains": cid}})
-                                elif p_type == "number":
-                                    if cid.isdigit():
-                                        or_filters.append({"property": p_name, "number": {"equals": int(cid)}})
-                                elif p_type in ["rich_text", "title"]:
-                                    or_filters.append({"property": p_name, p_type: {"equals": cid}})
-                        
-                        if not or_filters:
-                             st.error("Aucune colonne compatible trouvée pour la recherche.")
-                             break
-                             
-                        query_filter = {"or": or_filters}
-                        
-                        try:
-                            api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-                            # Headers already defined above
-                            resp = requests.post(api_url, headers=headers, json={"filter": query_filter})
+                            or_filters = []
+                            for prop in searchable_props:
+                                p_name = prop['name']
+                                p_type = prop['type']
+                                
+                                for cid in chunk:
+                                    if p_type == "url":
+                                        or_filters.append({"property": p_name, "url": {"contains": cid}})
+                                    elif p_type == "number":
+                                        if cid.isdigit():
+                                            or_filters.append({"property": p_name, "number": {"equals": int(cid)}})
+                                    elif p_type in ["rich_text", "title"]:
+                                        or_filters.append({"property": p_name, p_type: {"contains": cid}}) # Use contains for text to catch ID inside URL string
                             
-                            if resp.status_code == 200:
-                                q_data = resp.json()
-                                for page in q_data.get('results', []):
-                                    page_props = page.get('properties', {})
-                                    
-                                    # Verification (Check if ID is really in one of the target props)
-                                    match_found = False
-                                    for prop in target_props:
-                                        p_name = prop['name']
-                                        p_type = prop['type']
-                                        val_obj = page_props.get(p_name)
+                            if not or_filters:
+                                 break
+                                 
+                            query_filter = {"or": or_filters}
+                            
+                            try:
+                                api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+                                resp = requests.post(api_url, headers=headers, json={"filter": query_filter})
+                                
+                                if resp.status_code == 200:
+                                    q_data = resp.json()
+                                    for page in q_data.get('results', []):
+                                        page_props = page.get('properties', {})
                                         
-                                        if val_obj:
-                                            val_str = ""
-                                            if p_type == "url":
-                                                val_str = val_obj.get('url', '')
-                                            elif p_type == "number":
-                                                val_str = str(val_obj.get('number', ''))
-                                            elif p_type in ["rich_text", "title"]:
-                                                rt = val_obj.get(p_type, [])
-                                                val_str = rt[0].get('plain_text', '') if rt else ''
+                                        # Verification Phase: Check ALL columns (even formulas if we fetched the page)
+                                        # But here we just check if any of our searchable props matched OR if a formula prop matches the ID
+                                        
+                                        # To be safe, we check if the ID exists in ANY property of the returned page
+                                        match_found = False
+                                        # Flatten properties to string values
+                                        all_values = []
+                                        for p_key, p_val in page_props.items():
+                                            # Helper to extract value regardless of type
+                                            v = ""
+                                            pt = p_val.get('type')
+                                            if pt == 'url': v = p_val.get('url', '')
+                                            elif pt == 'number': v = str(p_val.get('number', ''))
+                                            elif pt in ['rich_text', 'title']:
+                                                raw = p_val.get(pt, [])
+                                                v = raw[0].get('plain_text', '') if raw else ''
+                                            elif pt == 'formula':
+                                                # Formula result
+                                                f_res = p_val.get('formula', {})
+                                                f_type = f_res.get('type')
+                                                if f_type == 'string': v = f_res.get('string', '')
+                                                elif f_type == 'number': v = str(f_res.get('number', ''))
                                             
-                                            if val_str:
-                                                for cid in chunk:
-                                                    if cid == val_str or (p_type == "url" and cid in val_str):
-                                                        found_duplicates.append(cid)
-                                                        match_found = True
-                        except Exception: pass
+                                            if v: all_values.append(str(v))
+                                        
+                                        for cid in chunk:
+                                            # Robust check: Exact match or contained in URL
+                                            for val in all_values:
+                                                if val and (cid == val or cid in val):
+                                                    found_duplicates.append(cid)
+                                                    
+                                else:
+                                    st.error(f"Erreur API Notion ({resp.status_code}): {resp.text}")
+                            except Exception as e:
+                                st.error(f"Erreur requête : {e}")
                     
                     # Remove duplicates
                     found_duplicates = list(set(found_duplicates))
