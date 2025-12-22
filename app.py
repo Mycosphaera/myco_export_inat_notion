@@ -461,7 +461,17 @@ if st.session_state.show_selection and st.session_state.search_results:
         # Extended Metadata
         user_login = obs.get('user', {}).get('login', 'N/A')
         tags = obs.get('tags', [])
-        tag_str = ", ".join([t['tag'] for t in tags]) if tags else ""
+        tag_str = ""
+        if tags:
+            extracted_tags = []
+            for t in tags:
+                if isinstance(t, dict):
+                    extracted_tags.append(t.get('tag', ''))
+                elif isinstance(t, str):
+                    extracted_tags.append(t)
+                else:
+                    extracted_tags.append(str(t))
+            tag_str = ", ".join(filter(None, extracted_tags))
         desc_text = obs.get('description', '') or ""
         gps_coords = obs.get('location', '') or ""
 
