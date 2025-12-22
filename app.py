@@ -1,13 +1,13 @@
 import streamlit as st
 import pandas as pd
-from pyinaturalist import get_observations
+from pyinaturalist import get_observations, get_places
 from notion_client import Client
 from datetime import date
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Importateur Myco-Notion", page_icon="🍄")
+st.set_page_config(page_title="Importateur Myco-Notion", page_icon="🍄", layout="wide")
 st.title("🍄 Importateur iNaturalist → Notion")
-st.caption("Configuration: Mapping OBNL (v2.0 - Multi-filtres)")
+st.caption("Configuration: Filtres naturels & Recherche de lieux")
 
 # --- SECRETS MANAGEMENT ---
 try:
@@ -17,63 +17,89 @@ try:
 except FileNotFoundError:
     has_secrets = False
 
-# --- SIDEBAR CONFIGURATION ---
+# --- SIDEBAR (Connexion) ---
 with st.sidebar:
-    st.header("Connexion")
+    st.header("🔐 Connexion")
     if not has_secrets:
-        st.warning("Mode manuel (Secrets non détectés)")
+        st.warning("Mode manuel")
         NOTION_TOKEN = st.text_input("Token Notion", type="password")
         DATABASE_ID = st.text_input("ID Database")
     
-    st.divider()
-    st.markdown("### 👥 Filtres Globaux")
-    # NEW: Multiple users input
-    inat_users_input = st.text_area(
-        "Utilisateurs iNaturalist", 
-        value="mycosphaera", 
-        help="Séparez les noms par des virgules (ex: user1, user2)"
-    )
-    # NEW: Place ID input
-    place_id_input = st.text_input(
-        "ID du Lieu (Optionnel)",
-        help="Entrez l'ID numérique du lieu (ex: 6712 pour Québec). Laissez vide pour tout."
-    )
+    # We keep the User input in sidebar as a "global" setting or move it to main filters depending on preference.
+    # Let's keep a default user setting here if needed, but allow override in filters.
+    default_user = st.text_input("Utilisateur par défaut", value="mycosphaera")
 
 # --- NOTION CLIENT ---
 if NOTION_TOKEN:
     notion = Client(auth=NOTION_TOKEN)
 
 # --- INTERFACE ---
-tab1, tab2 = st.tabs(["📅 Recherche Avancée", "🔢 Par Liste d'IDs"])
+tab1, tab2 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs"])
 params = {}
 run_import = False
 
 with tab1:
-    # NEW: Date Mode Selection
-    date_mode = st.radio("Mode de sélection de date :", ["Plage de dates", "Date unique"], horizontal=True)
+    st.markdown("### Filtres d'observation")
     
-    c1, c2 = st.columns(2)
-    d1, d2 = None, None
+    # Layout similar to iNaturalist: 3 Columns
+    col_filters_1, col_filters_2, col_filters_3 = st.columns([1, 1, 1])
+
+    with col_filters_1:
+        st.markdown("**👤 Personne & Projet**")
+        user_input = st.text_input("Utilisateur(s)", value=default_user, help="Séparez par des virgules")
+        taxon_id = st.text_input("ID Taxon (ex: 47169 Fungi)", value="47169")
+
+    with col_filters_2:
+        st.markdown("**🌍 Lieu**")
+        # --- PLACE SEARCH ENGINE ---
+        place_query = st.text_input("Chercher un lieu (Ville, Province...)", placeholder="ex: Québec")
+        selected_place_id = None
+        
+        if place_query:
+            try:
+                # Fetch suggestions from iNat API
+                places = get_places(q=place_query, autocomplete=True, per_page=10)
+                if places['results']:
+                    # Create a dict { "Name (Type)": id }
+                    place_options = {f"{p['display_name']} ({p['place_type_name']})": p['id'] for p in places['results']}
+                    
+                    selected_name = st.selectbox("� Sélectionner le lieu exact :", options=place_options.keys())
+                    selected_place_id = place_options[selected_name]
+                    st.success(f"Lieu sélectionné : ID {selected_place_id}")
+                else:
+                    st.warning("Aucun lieu trouvé.")
+            except Exception as e:
+                st.error(f"Erreur recherche lieu: {e}")
+        else:
+            st.info("Laissez vide pour le monde entier.")
+
+    with col_filters_3:
+        st.markdown("**📅 Date d'observation**")
+        date_mode = st.radio("Type de date", ["Période", "Date exacte", "Tout"], index=0)
+        
+        d1, d2 = None, None
+        if date_mode == "Date exacte":
+            the_date = st.date_input("Date", value=date.today())
+            d1, d2 = the_date, the_date
+        elif date_mode == "Période":
+            c_start, c_end = st.columns(2)
+            d1 = c_start.date_input("Du", value=date(2024, 1, 1))
+            d2 = c_end.date_input("Au", value=date.today())
+        # "Tout" leaves d1, d2 as None
+
+    st.divider()
     
-    if date_mode == "Date unique":
-        the_date = c1.date_input("Sélectionner la date", value=date.today())
-        d1, d2 = the_date, the_date
-    else:
-        d1 = c1.date_input("Date de début", value=date(2024, 1, 1))
-        d2 = c2.date_input("Date de fin", value=date.today())
-    
-    taxon_id = st.text_input("ID Taxon (ex: 47169 pour Fungi)", value="47169")
-    
-    if st.button("Rechercher", type="primary"):
-        # Process users list
-        user_list = [u.strip() for u in inat_users_input.split(',') if u.strip()]
+    # Button centered or wide
+    if st.button("Lancer la recherche 🚀", type="primary", use_container_width=True):
+        # Prepare User List
+        user_list = [u.strip() for u in user_input.split(',') if u.strip()]
         
         params = {
             "user_id": user_list,
             "d1": d1, 
             "d2": d2, 
             "taxon_id": taxon_id, 
-            "place_id": place_id_input if place_id_input else None,
+            "place_id": selected_place_id, # The Magic ID found by search
             "per_page": 50, 
             "detail": "all"
         }
@@ -81,17 +107,16 @@ with tab1:
 
 with tab2:
     ids_input = st.text_area("IDs (séparés par virgules)")
-    if st.button("Importer IDs", type="primary"):
+    if st.button("Importer IDs Spécifiques", type="primary"):
         id_list = [x.strip() for x in ids_input.split(',') if x.strip().isdigit()]
         if id_list:
             params = {"id": id_list}
             run_import = True
 
-# --- IMPORT LOGIC ---
+# --- IMPORT LOGIC (UNCHANGED MAPPING) ---
 if run_import and NOTION_TOKEN and DATABASE_ID:
     with st.status("Traitement en cours...", expanded=True) as status:
         try:
-            # Note: pyinaturalist handles list of users automatically
             obs_list = get_observations(**params)['results']
         except Exception as e:
             st.error(f"Erreur iNaturalist : {e}")
@@ -101,7 +126,7 @@ if run_import and NOTION_TOKEN and DATABASE_ID:
             st.warning("Aucune observation trouvée avec ces critères.")
             st.stop()
 
-        st.write(f"Traitement de {len(obs_list)} observations...")
+        st.write(f"🔎 {len(obs_list)} observations trouvées. Importation vers Notion...")
         bar = st.progress(0)
         
         for i, obs in enumerate(obs_list):
@@ -114,13 +139,10 @@ if run_import and NOTION_TOKEN and DATABASE_ID:
             date_iso = observed_on.isoformat() if observed_on else None
             
             obs_url = obs.get('uri')
-            
             tags = obs.get('tags', []) 
             tag_string = ", ".join(t['tag'] for t in tags) if tags else ""
-            
             place_guess = obs.get('place_guess', '')
             description = obs.get('description', '')
-            
             coords = obs.get('location')
             lat, lon = map(float, coords.split(',')) if coords else (None, None)
 
@@ -128,7 +150,7 @@ if run_import and NOTION_TOKEN and DATABASE_ID:
             cover_url = photos[0]['url'].replace("square", "medium") if photos else None
             first_photo_url = photos[0]['url'].replace("square", "original") if photos else None
 
-            # 2. BUILD CONTENT (Gallery)
+            # 2. BUILD CONTENT
             children = []
             if len(photos) > 1:
                 children.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"text": {"content": "Galerie Photo"}}]}})
@@ -139,7 +161,7 @@ if run_import and NOTION_TOKEN and DATABASE_ID:
                         "image": {"type": "external", "external": {"url": p['url'].replace("square", "large")}}
                     })
 
-            # 3. MAPPING (Specific to User DB)
+            # 3. MAPPING
             props = {}
             props["Titre"] = {"title": [{"text": {"content": sci_name}}]}
             
@@ -152,12 +174,8 @@ if run_import and NOTION_TOKEN and DATABASE_ID:
             if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
             if lat: props["latitude (sexadécimal)"] = {"number": lat}
             if lon: props["longitude (sexadécimal)"] = {"number": lon}
-            
-            # Place ID filter check (Visual confirmation)
-            if place_id_input:
-                 props["Place ID (Filtre)"] = {"rich_text": [{"text": {"content": place_id_input}}]} # Optional logging
 
-            # 4. SEND TO NOTION
+            # 4. SEND
             parent_obj = {"type": "database_id", "database_id": DATABASE_ID}
 
             try:
@@ -172,5 +190,5 @@ if run_import and NOTION_TOKEN and DATABASE_ID:
 
             bar.progress((i + 1) / len(obs_list))
 
-        status.update(label="Importation terminée !", state="complete")
+        status.update(label="✅ Terminé !", state="complete")
         st.success(f"Synchronisation réussie de {len(obs_list)} observations.")
