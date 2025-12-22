@@ -705,7 +705,7 @@ if st.session_state.show_selection and st.session_state.search_results:
                 # SEND TO NOTION
                 try:
                     notion.pages.create(
-                        parent={"type": "database_id", "database_id": DATABASE_ID},
+                        parent={"database_id": DATABASE_ID},
                         properties=props,
                         children=children,
                         cover={"external": {"url": cover_url}} if cover_url else None
