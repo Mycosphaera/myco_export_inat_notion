@@ -603,12 +603,18 @@ if st.session_state.show_selection and st.session_state.search_results:
                      show_details(row)
                  
                  # Update State
-                 st.session_state.selection_states[o_id] = is_checked
-             except ValueError:
-                 pass # Skip if ID issue
+                st.session_state.selection_states[o_id] = is_checked
+            except ValueError:
+                pass # Skip if ID issue
 
-    # 3. Count total checked (visual feedback)
-    total_checked = int(response['Import'].sum()) if not response.empty else 0
+    # 3. Count total checked FROM STATE (Source of Truth)
+    # Filter keys in selection_states that are True AND exist in current search results
+    current_ids = {obs['id'] for obs in st.session_state.search_results}
+    
+    # Ensure current dictionary aligns with reality (implicit in usage, but good to be precise)
+    # We count only what is currently True in the state
+    total_checked = sum(1 for oid, is_sel in st.session_state.selection_states.items() if is_sel and oid in current_ids)
+    
     st.info(f"{total_checked} observations sélectionnées pour l'import.")
     
     # --- DUPLICATE CHECKER ---
@@ -616,24 +622,14 @@ if st.session_state.show_selection and st.session_state.search_results:
         col_dup, col_imp = st.columns([1, 1])
         if col_dup.button("🕵️ Vérifier doublons Notion", type="secondary"):
             with st.spinner("Vérification des doublons dans Notion..."):
-                checked_rows = response[response['Import'] == True]
+                # Get IDs from STATE
+                ids_to_check = [str(oid) for oid, is_sel in st.session_state.selection_states.items() if is_sel and oid in current_ids]
+                
                 dup_count = 0
                 processed = 0
-                
-                # Get IDs to check
-                ids_to_check = []
-                for _, r in checked_rows.iterrows():
-                     ids_to_check.append(str(r['ID']).replace(",","")) # string ID
-                
-                # Check in batches of 10 to avoid huge URLs/Requests
-                # Or just iterate if safer. 
-                # Let's try to query by URL property
-                
                 found_duplicates = []
                 
                 # Optimized: Filter by OR 
-                # Notion API allows filter with 'or'
-                # Let's chunk by 20
                 chunk_size = 20
                 for i in range(0, len(ids_to_check), chunk_size):
                     chunk = ids_to_check[i:i + chunk_size]
@@ -641,8 +637,6 @@ if st.session_state.show_selection and st.session_state.search_results:
                     # Build OR filter
                     or_filters = []
                     for cid in chunk:
-                       # Match URL containing the ID
-                       # "URL Inaturalist" property
                        or_filters.append({
                            "property": "URL Inaturalist",
                            "url": {
@@ -653,15 +647,11 @@ if st.session_state.show_selection and st.session_state.search_results:
                     query_filter = {"or": or_filters}
                     
                     try:
-                        # Use standard requests to bypass notion-client issues
-                        # Verify URL and Headers
+                        # Use standard requests
                         api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
                         headers = {
                             "Authorization": f"Bearer {NOTION_TOKEN}",
-                            "Notion-Version": "2022-06-28", # Stable version, user's 2025 might be invalid? Let's try 2022-06-28 first or stick to what they asked.
-                            # User asked for 2025-09-03. Let's respect it but maybe fallback if fails?
-                            # Actually, 2025-09-03 doesn't exist. Latest is 2022-06-28.
-                            # I'll use 2022-06-28 as safe default to fix the "Invalid URL" which might be version related.
+                            "Notion-Version": "2022-06-28",
                             "Content-Type": "application/json"
                         }
                         
@@ -672,7 +662,7 @@ if st.session_state.show_selection and st.session_state.search_results:
                             
                         q_data = resp.json()
                         
-                        # Process results to see WHICH ones matched
+                        # Process results
                         for page in q_data.get('results', []):
                              props = page.get('properties', {})
                              url_prop = props.get('URL Inaturalist', {}).get('url', '')
@@ -685,34 +675,22 @@ if st.session_state.show_selection and st.session_state.search_results:
                     
                     except Exception as e:
                         st.error(f"Erreur lors de la vérification Notion: {e}")
-                    
-                    except Exception as e:
-                        st.error(f"Erreur lors de la vérification Notion: {e}")
                 
                 if found_duplicates:
                     st.warning(f"⚠️ {len(found_duplicates)} doublons trouvés et décochés automatiquement : {', '.join(found_duplicates)}")
-                    # Force rerun to update UI
                     st.rerun()
                 else:
                     st.success("✅ Aucun doublon trouvé parmi la sélection !")
 
     if st.button("📤 Importer vers Notion", type="primary"):
-        # Robust Import Logic
+        # Robust Import Logic using STATE
         ids_to_import = []
-        if not response.empty:
-            checked_rows = response[response['Import'] == True]
-            if not checked_rows.empty:
-                # Get IDs as strings
-                 checked_ids = set()
-                 for _, r in checked_rows.iterrows():
-                     # Safe conversion
-                     checked_ids.add(str(r['ID']))
-                     
-                 # Filter source list
-                 ids_to_import = [
-                    obs for obs in st.session_state.search_results 
-                    if str(obs['id']) in checked_ids
-                ]
+        
+        # Filter source list using STATE
+        ids_to_import = [
+            obs for obs in st.session_state.search_results 
+            if st.session_state.selection_states.get(obs['id'], False)
+        ]
         
         if not ids_to_import:
             st.warning("Aucune observation sélectionnée.")
