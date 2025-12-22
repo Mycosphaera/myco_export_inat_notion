@@ -68,8 +68,8 @@ with st.sidebar:
 
 # --- NOTION CLIENT ---
 if NOTION_TOKEN:
-    # Use stable version 2022-06-28 instead of experimental 2025 date
-    notion = Client(auth=NOTION_TOKEN, notion_version="2022-06-28")
+    # Restoring user's preferred version string
+    notion = Client(auth=NOTION_TOKEN, notion_version="2025-09-03")
 
 # --- INTERFACE ---
 tab1, tab2 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs"])
@@ -671,7 +671,7 @@ if st.session_state.show_selection and st.session_state.search_results:
                             api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
                             headers = {
                                 "Authorization": f"Bearer {NOTION_TOKEN}",
-                                "Notion-Version": "2022-06-28",
+                                "Notion-Version": "2025-09-03", # Restoring user's version string here too
                                 "Content-Type": "application/json"
                             }
                             
@@ -688,7 +688,8 @@ if st.session_state.show_selection and st.session_state.search_results:
                                      for cid in chunk:
                                          if cid in url_prop:
                                              found_duplicates.append(cid)
-                                             st.session_state.selection_states[int(cid)] = False
+                                             # Removed auto-uncheck here as user requested the OPTION via button later
+                                             # st.session_state.selection_states[int(cid)] = False
                         except Exception as e:
                             st.error(f"Exception: {e}")
                     
