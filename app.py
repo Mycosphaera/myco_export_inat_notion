@@ -694,8 +694,13 @@ if st.session_state.search_results:
                         
                         query_filter = {"or": or_filters}
                         
+                        
                         try:
                             api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+                            # DEBUG: Verify the URL and ID
+                            # st.write(f"DEBUG: api_url='{api_url}'")
+                            # st.write(f"DEBUG: DATABASE_ID='{DATABASE_ID}'")
+                            
                             headers = {
                                 "Authorization": f"Bearer {NOTION_TOKEN}",
                                 "Notion-Version": "2025-09-03",
@@ -728,6 +733,8 @@ if st.session_state.search_results:
                                                 
                             else:
                                 st.error(f"Erreur API Notion ({resp.status_code}) : {resp.text}")
+                                st.error(f"⚠️ DEBUG URL: {api_url}") # Show URL on error
+                                st.error(f"⚠️ DEBUG ID: '{DATABASE_ID}'") # Show ID on error
                                 error_occurred = True
                                 break # Stop strict
                         except Exception as e:
