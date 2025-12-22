@@ -162,20 +162,49 @@ if run_search:
         try:
             results = []
             
+            # Helper to fetch pages
+            def fetch_with_pagination(api_params, max_count):
+                collected = []
+                page = 1
+                while len(collected) < max_count:
+                    # Adjust per_page if nearing limit
+                    remaining = max_count - len(collected)
+                    p_size = min(200, remaining) # Max 200 per call
+                    
+                    api_params['page'] = page
+                    api_params['per_page'] = p_size
+                    
+                    batch = get_observations(**api_params)['results']
+                    if not batch:
+                        break
+                        
+                    collected.extend(batch)
+                    if len(batch) < p_size: # End of results
+                        break
+                    
+                    page += 1
+                return collected
+
             # MULTI-DATE LOGIC
             if date_mode == "Multi-dates" and st.session_state.custom_dates:
                 for d in st.session_state.custom_dates:
                     p = params.copy()
                     p['on'] = d # Specific API parameter for single date
-                    # Remove d1/d2 if present to avoid conflict (though params logic above leaves them None)
+                    # Remove d1/d2 if present to avoid conflict
                     p.pop('d1', None) 
                     p.pop('d2', None)
                     
-                    batch = get_observations(**p)['results']
+                    # Fetch for this date (respecting global limit per date? or split limit? 
+                    # Let's apply fetch_limit per date to avoid complexity, or just 200 per date)
+                    # User likely expects "Tout" to include all dates fully.
+                    # Simplification: Apply fetch_limit TO TOTAL is hard with loop.
+                    # Let's fetch "Tout" for each date if requested.
+                    
+                    batch = fetch_with_pagination(p, fetch_limit)
                     results.extend(batch)
             else:
                 # Standard Search
-                results = get_observations(**params)['results']
+                results = fetch_with_pagination(params, fetch_limit)
             
             # Remove potential duplicates based on ID
             seen_ids = set()
