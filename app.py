@@ -611,6 +611,79 @@ if st.session_state.show_selection and st.session_state.search_results:
     total_checked = int(response['Import'].sum()) if not response.empty else 0
     st.info(f"{total_checked} observations sélectionnées pour l'import.")
     
+    # --- DUPLICATE CHECKER ---
+    if total_checked > 0 and NOTION_TOKEN and DATABASE_ID:
+        col_dup, col_imp = st.columns([1, 1])
+        if col_dup.button("🕵️ Vérifier doublons Notion", type="secondary"):
+            with st.spinner("Vérification des doublons dans Notion..."):
+                checked_rows = response[response['Import'] == True]
+                dup_count = 0
+                processed = 0
+                
+                # Get IDs to check
+                ids_to_check = []
+                for _, r in checked_rows.iterrows():
+                     ids_to_check.append(str(r['ID']).replace(",","")) # string ID
+                
+                # Check in batches of 10 to avoid huge URLs/Requests
+                # Or just iterate if safer. 
+                # Let's try to query by URL property
+                
+                found_duplicates = []
+                
+                # Optimized: Filter by OR 
+                # Notion API allows filter with 'or'
+                # Let's chunk by 20
+                chunk_size = 20
+                for i in range(0, len(ids_to_check), chunk_size):
+                    chunk = ids_to_check[i:i + chunk_size]
+                    
+                    # Build OR filter
+                    or_filters = []
+                    for cid in chunk:
+                       # Match URL containing the ID
+                       # "URL Inaturalist" property
+                       or_filters.append({
+                           "property": "URL Inaturalist",
+                           "url": {
+                               "contains": cid
+                           }
+                       })
+                    
+                    query_filter = {"or": or_filters}
+                    
+                    try:
+                        # Query Notion
+                        q_resp = notion.databases.query(
+                            database_id=DATABASE_ID,
+                            filter=query_filter
+                        )
+                        
+                        # Process results to see WHICH ones matched
+                        for page in q_resp.get('results', []):
+                             # Extract the URL to see which ID it matches
+                             # This is tricky because Notion returns the Page, we need to find which ID it corresponds to.
+                             # But we just want to know IF they exist.
+                             # If we found duplicates, we need to know WHICH ones.
+                             props = page.get('properties', {})
+                             url_prop = props.get('URL Inaturalist', {}).get('url', '')
+                             if url_prop:
+                                 for cid in chunk:
+                                     if cid in url_prop:
+                                         found_duplicates.append(cid)
+                                         # Uncheck in session state
+                                         st.session_state.selection_states[int(cid)] = False
+                    
+                    except Exception as e:
+                        st.error(f"Erreur lors de la vérification Notion: {e}")
+                
+                if found_duplicates:
+                    st.warning(f"⚠️ {len(found_duplicates)} doublons trouvés et décochés automatiquement : {', '.join(found_duplicates)}")
+                    # Force rerun to update UI
+                    st.rerun()
+                else:
+                    st.success("✅ Aucun doublon trouvé parmi la sélection !")
+
     if st.button("📤 Importer vers Notion", type="primary"):
         # Robust Import Logic
         ids_to_import = []
