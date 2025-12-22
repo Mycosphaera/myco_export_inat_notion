@@ -517,18 +517,22 @@ if st.session_state.show_selection and st.session_state.search_results:
     
     # Configure Columns
     column_config = {
-        "Import": st.column_config.CheckboxColumn("Sélectionner"),
-        "ID": st.column_config.TextColumn("ID iNat"), # Text to force no formatting
-        "Taxon": st.column_config.TextColumn("Espèce"),
-        "Date": st.column_config.TextColumn("Date"),
-        "Lieu": st.column_config.TextColumn("Lieu"),
-        "Mycologue": st.column_config.TextColumn("Mycologue"),
-        "Tags": st.column_config.TextColumn("No° Fongarium (Tags)"),
-        "Description": st.column_config.TextColumn("Description"),
-        "GPS": st.column_config.TextColumn("GPS"),
-        "URL iNat": st.column_config.LinkColumn("Lien iNat"),
-        "Photo URL": st.column_config.LinkColumn("Lien Photo"),
-        "Image": st.column_config.ImageColumn("Aperçu"),
+        "Import": st.column_config.CheckboxColumn("✅", width="small"),
+        "ID": st.column_config.TextColumn("🆔 ID", width="small"),
+        "Taxon": st.column_config.TextColumn("🍄 Espèce"),
+        "Date": st.column_config.TextColumn("📅 Date"),
+        "Lieu": st.column_config.TextColumn("📍 Lieu"),
+        "Mycologue": st.column_config.TextColumn("👤 Mycologue"),
+        "Tags": st.column_config.TextColumn("🏷️ Tags"),
+        "Description": st.column_config.TextColumn("📝 Description"),
+        "GPS": st.column_config.TextColumn("🌍 GPS"),
+        "URL iNat": st.column_config.LinkColumn(
+            "🌐 iNat", 
+            display_text=r"https://www\.inaturalist\.org/observations/(.*)", # Show ID as link text
+            help="Cliquer pour ouvrir l'observation sur iNaturalist"
+        ),
+        "Photo URL": st.column_config.LinkColumn("🖼️ Photo", help="Lien direct vers l'image"),
+        "Image": st.column_config.ImageColumn("📷 Aperçu", help="Cliquer pour agrandir"),
         "_original_obs": None 
     }
     
