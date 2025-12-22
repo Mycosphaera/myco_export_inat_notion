@@ -18,6 +18,8 @@ if 'select_all' not in st.session_state:
     st.session_state.select_all = True # Default state
 if 'custom_dates' not in st.session_state:
     st.session_state.custom_dates = []
+if 'selection_states' not in st.session_state:
+    st.session_state.selection_states = {} # Map ID -> bool
 
 # --- SECRETS MANAGEMENT ---
 try:
@@ -183,14 +185,16 @@ if run_search:
                     unique_results.append(r)
                     seen_ids.add(r['id'])
             
-            # SORT BY DATE (New Requirement)
-            # Handle None dates safely by putting them last
+            # Automatic Sort
             unique_results.sort(
                 key=lambda x: x.get('time_observed_at').isoformat() if x.get('time_observed_at') else "0000-00-00", 
                 reverse=True
             )
             
             st.session_state.search_results = unique_results
+            # Init selection state: Default All True
+            st.session_state.selection_states = {r['id']: True for r in unique_results}
+            
             st.session_state.show_selection = True
             if not unique_results:
                 st.warning("Aucune observation trouvée.")
@@ -201,18 +205,49 @@ if run_search:
 # --- SELECTION INTERFACE ---
 if st.session_state.show_selection and st.session_state.search_results:
     st.divider()
-    st.subheader(f"📋 Résultat : {len(st.session_state.search_results)} observations")
     
-    # Bulk Selection Buttons
+    # --- RESULT FILTERING ---
+    # Extract unique dates
+    all_dates = set()
+    for obs in st.session_state.search_results:
+        d_obj = obs.get('time_observed_at')
+        if d_obj:
+            all_dates.add(d_obj.strftime("%Y-%m-%d"))
+        else:
+            all_dates.add(obs.get('observed_on_string', 'N/A'))
+    
+    sorted_dates = sorted(list(all_dates), reverse=True)
+    
+    c_title, c_filter = st.columns([2, 1])
+    c_title.subheader(f"📋 Résultat : {len(st.session_state.search_results)} observations")
+    
+    filter_date = c_filter.selectbox("Filtrer par date", ["Tout"] + sorted_dates)
+    
+    # Filter Data
+    visible_obs = []
+    for obs in st.session_state.search_results:
+        # Get date str
+        d_obj = obs.get('time_observed_at')
+        d_str = d_obj.strftime("%Y-%m-%d") if d_obj else obs.get('observed_on_string', 'N/A')
+        
+        if filter_date == "Tout" or d_str == filter_date:
+            visible_obs.append(obs)
+
+    # Bulk Selection Buttons (Apply to VISIBLE only)
     c_sel1, c_sel2, c_space = st.columns([1, 1, 4])
-    if c_sel1.button("✅ Tout sélectionner"):
-        st.session_state.select_all = True
-    if c_sel2.button("❌ Tout désélectionner"):
-        st.session_state.select_all = False
+    if c_sel1.button("✅ Tout sélectionner (Vue)"):
+        for o in visible_obs:
+            st.session_state.selection_states[o['id']] = True
+        st.rerun()
+            
+    if c_sel2.button("❌ Tout désélectionner (Vue)"):
+        for o in visible_obs:
+            st.session_state.selection_states[o['id']] = False
+        st.rerun()
         
     # Transform to DataFrame for Data Editor
     raw_data = []
-    for obs in st.session_state.search_results:
+    for obs in visible_obs:
         # Safe extraction for display
         taxon_name = obs.get('taxon', {}).get('name') if obs.get('taxon') else "Inconnu"
         
@@ -226,27 +261,30 @@ if st.session_state.show_selection and st.session_state.search_results:
         place = obs.get('place_guess', 'N/A')
         img_url = obs.get('photos')[0]['url'].replace("square", "small") if obs.get('photos') else None
         
+        # Determine Checkbox State from Persistent Map
+        is_checked = st.session_state.selection_states.get(obs['id'], True)
+
         raw_data.append({
-            "Import": st.session_state.select_all, # Use global state
+            "Import": is_checked, 
             "ID": obs['id'],
             "Taxon": taxon_name,
             "Date": date_str,
             "Lieu": place,
             "Image": img_url,
-            "_original_obs": obs # Hidden column to keep full object
+            "_original_obs": obs 
         })
     
     df = pd.DataFrame(raw_data)
     
     # Configure Columns
     column_config = {
-        "Import": st.column_config.CheckboxColumn("Sélectionner", default=True),
+        "Import": st.column_config.CheckboxColumn("Sélectionner"),
         "ID": st.column_config.NumberColumn("ID iNat"),
         "Taxon": st.column_config.TextColumn("Espèce"),
         "Date": st.column_config.TextColumn("Date"),
         "Lieu": st.column_config.TextColumn("Lieu"),
         "Image": st.column_config.ImageColumn("Aperçu"),
-        "_original_obs": None # Hide this column
+        "_original_obs": None 
     }
     
     # Show Editor
@@ -255,20 +293,32 @@ if st.session_state.show_selection and st.session_state.search_results:
         column_config=column_config,
         hide_index=True,
         use_container_width=True,
-        disabled=["ID", "Taxon", "Date", "Lieu", "Image"] # Only allow checkbox editing
+        disabled=["ID", "Taxon", "Date", "Lieu", "Image"],
+        key=f"editor_{filter_date}" # Unique key to reset state on filter change
     )
     
-    # Filter Selected
-    selected_rows = edited_df[edited_df["Import"] == True]
+    # SYNC BACK TO STATE
+    # Iterate over edited rows to update master state
+    for index, row in edited_df.iterrows():
+        st.session_state.selection_states[row['ID']] = row['Import']
     
-    st.info(f"{len(selected_rows)} observations sélectionnées pour l'import.")
+    # Count total selected
+    total_selected = sum(st.session_state.selection_states.values())
+    
+    st.info(f"{total_selected} observations sélectionnées pour l'import (Total).")
     
     if st.button("📤 Importer vers Notion", type="primary"):
-        if selected_rows.empty:
+        # Gather all IDs that are True in selection_states AND exist in search_results
+        ids_to_import = [
+            obs for obs in st.session_state.search_results 
+            if st.session_state.selection_states.get(obs['id'], False)
+        ]
+        
+        if not ids_to_import:
             st.warning("Aucune observation sélectionnée.")
         elif NOTION_TOKEN and DATABASE_ID:
-            # RETRIEVE FULL OBJECTS BASED ON SELECTION
-            obs_to_import = selected_rows["_original_obs"].tolist()
+            # OBS TO IMPORT
+            obs_to_import = ids_to_import # Already list of dicts
             
             progress_bar = st.progress(0)
             status_text = st.empty()
