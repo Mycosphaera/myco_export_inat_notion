@@ -560,50 +560,71 @@ if st.session_state.show_selection and st.session_state.search_results:
     }
     
     # Show Editor
+    # Show Dataframe with Selection
     # Generate unique key string from sorted selected dates
     filter_key_suffix = "_all" if not filter_dates else "_" + "_".join(sorted(filter_dates))
     
-    response = st.data_editor(
+    # We use st.dataframe which supports robust selection
+    # Using selection_mode="multi-row" allows selecting observations to import
+    event = st.dataframe(
         df,
         column_config=column_config,
         hide_index=True,
         use_container_width=True,
-        disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "Description", "GPS", "URL iNat", "Photo URL", "Image", "_original_obs"],
-        key=f"editor{filter_key_suffix}",
-        on_select="rerun" # Enable selection events. Note: selection_mode not supported in data_editor as of 1.40?
+        key=f"df{filter_key_suffix}",
+        on_select="rerun",
+        selection_mode="multi-row"
     )
     
-    # 1. Handle Row Selection (Pop-up)
-    # Check if we have a selection
-    if response.selection and response.selection['rows']:
-        idx = response.selection['rows'][0]
-        # Check bounds (just in case)
-        if idx < len(df):
-            # Check if this is a NEW selection
-            if idx != st.session_state.last_selected_index:
-                 st.session_state.last_selected_index = idx
-                 row_data = df.iloc[idx]
-                 show_details(row_data) # Open the dialog
-    else:
-        st.session_state.last_selected_index = None
+    # 1. Handle Selection (Import State + Pop-up)
+    current_indices = event.selection['rows']
     
-    # SYNC BACK TO STATE
-    # Iterate over edited rows to update master state
-    # With on_select, response is a DataEditor object, access .data for DF
-    if response.data is not None and not response.data.empty:
-        for index, row in response.data.iterrows():
-            # Use original ID for reliable mapping
-            if '_original_obs' in row and isinstance(row['_original_obs'], dict):
-                 o_id = row['_original_obs']['id']
-                 st.session_state.selection_states[o_id] = row['Import']
+    # Update Import State based on selection
+    # Reset states for visible rows first? No, easier to rely on explicit selection.
+    # But filtering makes this tricky (invisible rows).
+    # Logic: 
+    # - If row is selected in UI, set stored state to True.
+    # - If row is visible but NOT selected, set stored state to False.
+    # - This ensures WYSIWYG.
     
+    # Check identifying IDs for visible rows
+    visible_ids = [row['_original_obs']['id'] for _, row in df.iterrows()]
+    selected_subset_ids = []
+    
+    if current_indices:
+        for idx in current_indices:
+            if idx < len(df):
+                obs_row = df.iloc[idx]
+                o_id = obs_row['_original_obs']['id']
+                selected_subset_ids.append(o_id)
+                st.session_state.selection_states[o_id] = True
+                
+                # Check for Pop-up Trigger (Last Selected)
+                # We identify "new" selection by checking set difference or single click?
+                # Multi-row makes "last clicked" hard to guess from list.
+                # Heuristic: If 1 row selected, show it?
+                # Or if selection length changed by 1?
+                # Let's show details for the LAST item in the list (usually most recent click?)
+                # Use a specific logic: Only open if 1 item selected?
+                # User wants to browse.
+                # Let's open the last index.
+                if len(current_indices) == 1:
+                     # Only pop up if purely one item selected (avoids spam on bulk select)
+                     show_details(obs_row)
+    
+    # Mark unselected visible rows as False
+    for o_id in visible_ids:
+        if o_id not in selected_subset_ids:
+             st.session_state.selection_states[o_id] = False
+
     # Count total selected
     total_selected = sum(st.session_state.selection_states.values())
     
-    st.info(f"{total_selected} observations sélectionnées pour l'import (Total).")
+    st.info(f"{total_selected} observations sélectionnées pour l'import.")
     
     if st.button("📤 Importer vers Notion", type="primary"):
         # Gather all IDs that are True in selection_states AND exist in search_results
+        # Need to re-fetch full objects for IDs that are selected
         ids_to_import = [
             obs for obs in st.session_state.search_results 
             if st.session_state.selection_states.get(obs['id'], False)
