@@ -212,6 +212,7 @@ if st.session_state.show_selection and st.session_state.search_results:
     for obs in st.session_state.search_results:
         d_obj = obs.get('time_observed_at')
         if d_obj:
+            # FORCE STRING FORMAT TO REMOVE TIME "2024-05-20"
             all_dates.add(d_obj.strftime("%Y-%m-%d"))
         else:
             all_dates.add(obs.get('observed_on_string', 'N/A'))
