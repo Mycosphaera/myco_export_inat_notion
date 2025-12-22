@@ -314,6 +314,13 @@ if st.session_state.show_selection and st.session_state.search_results:
         
         # Determine Checkbox State from Persistent Map
         is_checked = st.session_state.selection_states.get(obs['id'], True)
+        
+        # Extended Metadata
+        user_login = obs.get('user', {}).get('login', 'N/A')
+        tags = obs.get('tags', [])
+        tag_str = ", ".join([t['tag'] for t in tags]) if tags else ""
+        desc_text = obs.get('description', '') or ""
+        gps_coords = obs.get('location', '') or ""
 
         raw_data.append({
             "Import": is_checked, 
@@ -321,6 +328,10 @@ if st.session_state.show_selection and st.session_state.search_results:
             "Taxon": taxon_name,
             "Date": date_str,
             "Lieu": place,
+            "Mycologue": user_login,
+            "Tags": tag_str,
+            "Description": desc_text,
+            "GPS": gps_coords,
             "Image": img_url,
             "_original_obs": obs 
         })
@@ -334,6 +345,10 @@ if st.session_state.show_selection and st.session_state.search_results:
         "Taxon": st.column_config.TextColumn("Espèce"),
         "Date": st.column_config.TextColumn("Date"),
         "Lieu": st.column_config.TextColumn("Lieu"),
+        "Mycologue": st.column_config.TextColumn("Mycologue"),
+        "Tags": st.column_config.TextColumn("No° Fongarium (Tags)"),
+        "Description": st.column_config.TextColumn("Description"),
+        "GPS": st.column_config.TextColumn("GPS"),
         "Image": st.column_config.ImageColumn("Aperçu"),
         "_original_obs": None 
     }
@@ -344,7 +359,7 @@ if st.session_state.show_selection and st.session_state.search_results:
         column_config=column_config,
         hide_index=True,
         use_container_width=True,
-        disabled=["ID", "Taxon", "Date", "Lieu", "Image"],
+        disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "Description", "GPS", "Image"],
         key=f"editor_{filter_date}" # Unique key to reset state on filter change
     )
     
