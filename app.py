@@ -285,16 +285,14 @@ if st.session_state.show_selection and st.session_state.search_results:
     c_title.subheader(f"📋 Résultat : {len(st.session_state.search_results)} obs")
     
     # Use st.pills for "Etiquettes" (requires Streamlit 1.40+)
-    filter_date = c_filter.pills(
+    # Multi-select allowed. Empty = All.
+    filter_dates = c_filter.pills(
         "Filtrer par date", 
-        options=["Tout"] + sorted_dates, 
-        default="Tout", 
-        selection_mode="single",
+        options=sorted_dates, 
+        default=[], 
+        selection_mode="multi",
         label_visibility="collapsed"
     )
-    
-    if not filter_date: 
-        filter_date = "Tout" # Fallback if deselected
     
     # Filter Data
     visible_obs = []
@@ -322,7 +320,8 @@ if st.session_state.show_selection and st.session_state.search_results:
         if not date_extracted:
             date_extracted = "date_inconnue"
         
-        if filter_date == "Tout" or date_extracted == filter_date:
+        # Logic: Show if NO filter selected OR date matches one of selected
+        if not filter_dates or date_extracted in filter_dates:
             visible_obs.append(obs)
 
     # Bulk Selection Buttons (Apply to VISIBLE only)
