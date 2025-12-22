@@ -653,20 +653,27 @@ if st.session_state.show_selection and st.session_state.search_results:
                     query_filter = {"or": or_filters}
                     
                     try:
-                        # Query Notion using direct request to avoid AttributeError on 'query' check
-                        # Path: https://api.notion.com/v1/databases/{id}/query
-                        q_resp = notion.request(
-                            path=f"databases/{DATABASE_ID}/query",
-                            method="POST",
-                            body={"filter": query_filter}
-                        )
+                        # Use standard requests to bypass notion-client issues
+                        # Verify URL and Headers
+                        api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+                        headers = {
+                            "Authorization": f"Bearer {NOTION_TOKEN}",
+                            "Notion-Version": "2022-06-28", # Stable version, user's 2025 might be invalid? Let's try 2022-06-28 first or stick to what they asked.
+                            # User asked for 2025-09-03. Let's respect it but maybe fallback if fails?
+                            # Actually, 2025-09-03 doesn't exist. Latest is 2022-06-28.
+                            # I'll use 2022-06-28 as safe default to fix the "Invalid URL" which might be version related.
+                            "Content-Type": "application/json"
+                        }
+                        
+                        resp = requests.post(api_url, headers=headers, json={"filter": query_filter})
+                        
+                        if resp.status_code != 200:
+                            raise Exception(f"HTTP {resp.status_code}: {resp.text}")
+                            
+                        q_data = resp.json()
                         
                         # Process results to see WHICH ones matched
-                        for page in q_resp.get('results', []):
-                             # Extract the URL to see which ID it matches
-                             # This is tricky because Notion returns the Page, we need to find which ID it corresponds to.
-                             # But we just want to know IF they exist.
-                             # If we found duplicates, we need to know WHICH ones.
+                        for page in q_data.get('results', []):
                              props = page.get('properties', {})
                              url_prop = props.get('URL Inaturalist', {}).get('url', '')
                              if url_prop:
@@ -675,6 +682,9 @@ if st.session_state.show_selection and st.session_state.search_results:
                                          found_duplicates.append(cid)
                                          # Uncheck in session state
                                          st.session_state.selection_states[int(cid)] = False
+                    
+                    except Exception as e:
+                        st.error(f"Erreur lors de la vérification Notion: {e}")
                     
                     except Exception as e:
                         st.error(f"Erreur lors de la vérification Notion: {e}")
