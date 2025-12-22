@@ -210,10 +210,16 @@ if st.session_state.show_selection and st.session_state.search_results:
     # Extract unique dates
     all_dates = set()
     for obs in st.session_state.search_results:
-        d_obj = obs.get('time_observed_at')
-        if d_obj:
-            # FORCE STRING FORMAT TO REMOVE TIME "2024-05-20"
-            all_dates.add(d_obj.strftime("%Y-%m-%d"))
+        d_val = obs.get('time_observed_at')
+        
+        # Handle datetime object or string iso format
+        if d_val:
+            if hasattr(d_val, 'strftime'):
+                all_dates.add(d_val.strftime("%Y-%m-%d"))
+            elif isinstance(d_val, str):
+                # If it's a string like "2024-08-05 14:25:13" or "2024-08-05T14..."
+                # Take first 10 chars "2024-08-05"
+                all_dates.add(d_val[:10])
         else:
             all_dates.add(obs.get('observed_on_string', 'N/A'))
     
@@ -239,8 +245,14 @@ if st.session_state.show_selection and st.session_state.search_results:
     visible_obs = []
     for obs in st.session_state.search_results:
         # Get date str
-        d_obj = obs.get('time_observed_at')
-        d_str = d_obj.strftime("%Y-%m-%d") if d_obj else obs.get('observed_on_string', 'N/A')
+        d_val = obs.get('time_observed_at')
+        if d_val:
+            if hasattr(d_val, 'strftime'):
+                d_str = d_val.strftime("%Y-%m-%d")
+            elif isinstance(d_val, str):
+                d_str = d_val[:10]
+        else:
+            d_str = obs.get('observed_on_string', 'N/A')
         
         if filter_date == "Tout" or d_str == filter_date:
             visible_obs.append(obs)
