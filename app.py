@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from pyinaturalist import get_observations, get_places
+from pyinaturalist import get_observations, get_places_autocomplete
 from notion_client import Client
 from datetime import date
 
@@ -58,7 +58,7 @@ with tab1:
         if place_query:
             try:
                 # Fetch suggestions from iNat API
-                places = get_places(q=place_query, autocomplete=True, per_page=10)
+                places = get_places_autocomplete(q=place_query, per_page=10)
                 if places['results']:
                     # Create a dict { "Name (Type)": id }
                     place_options = {f"{p['display_name']} ({p['place_type_name']})": p['id'] for p in places['results']}
