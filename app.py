@@ -7,7 +7,7 @@ from datetime import date
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Importateur Myco-Notion", page_icon="🍄")
 st.title("🍄 Importateur iNaturalist → Notion")
-st.caption("Configuration: Mapping OBNL (Version 2025)")
+st.caption("Configuration: Mapping OBNL (v2.0 - Multi-filtres)")
 
 # --- SECRETS MANAGEMENT ---
 try:
@@ -17,31 +17,66 @@ try:
 except FileNotFoundError:
     has_secrets = False
 
+# --- SIDEBAR CONFIGURATION ---
 with st.sidebar:
     st.header("Connexion")
     if not has_secrets:
         st.warning("Mode manuel (Secrets non détectés)")
         NOTION_TOKEN = st.text_input("Token Notion", type="password")
         DATABASE_ID = st.text_input("ID Database")
-    inat_user = st.text_input("Utilisateur iNaturalist", value="votre_nom_utilisateur")
+    
+    st.divider()
+    st.markdown("### 👥 Filtres Globaux")
+    # NEW: Multiple users input
+    inat_users_input = st.text_area(
+        "Utilisateurs iNaturalist", 
+        value="mycosphaera", 
+        help="Séparez les noms par des virgules (ex: user1, user2)"
+    )
+    # NEW: Place ID input
+    place_id_input = st.text_input(
+        "ID du Lieu (Optionnel)",
+        help="Entrez l'ID numérique du lieu (ex: 6712 pour Québec). Laissez vide pour tout."
+    )
 
 # --- NOTION CLIENT ---
 if NOTION_TOKEN:
-    # Allow client to negotiate the best version, ensuring compatibility
     notion = Client(auth=NOTION_TOKEN)
 
 # --- INTERFACE ---
-tab1, tab2 = st.tabs(["📅 Par Filtres", "🔢 Par Liste d'IDs"])
+tab1, tab2 = st.tabs(["📅 Recherche Avancée", "🔢 Par Liste d'IDs"])
 params = {}
 run_import = False
 
 with tab1:
+    # NEW: Date Mode Selection
+    date_mode = st.radio("Mode de sélection de date :", ["Plage de dates", "Date unique"], horizontal=True)
+    
     c1, c2 = st.columns(2)
-    date_start = c1.date_input("Début", value=date(2024, 1, 1))
-    date_end = c2.date_input("Fin", value="today")
-    taxon_id = st.text_input("ID Taxon (ex: 47169)", value="47169")
+    d1, d2 = None, None
+    
+    if date_mode == "Date unique":
+        the_date = c1.date_input("Sélectionner la date", value=date.today())
+        d1, d2 = the_date, the_date
+    else:
+        d1 = c1.date_input("Date de début", value=date(2024, 1, 1))
+        d2 = c2.date_input("Date de fin", value=date.today())
+    
+    taxon_id = st.text_input("ID Taxon (ex: 47169 pour Fungi)", value="47169")
+    
     if st.button("Rechercher", type="primary"):
-        params = {"user_id": inat_user, "d1": date_start, "d2": date_end, "taxon_id": taxon_id, "per_page": 50, "detail": "all"}
+        # Process users list
+        user_list = [u.strip() for u in inat_users_input.split(',') if u.strip()]
+        
+        params = {
+            "user_id": user_list,
+            "d1": d1, 
+            "d2": d2, 
+            "taxon_id": taxon_id, 
+            "place_id": place_id_input if place_id_input else None,
+            "per_page": 50, 
+            "detail": "all"
+        }
         run_import = True
 
 with tab2:
@@ -56,9 +91,14 @@ with tab2:
 if run_import and NOTION_TOKEN and DATABASE_ID:
     with st.status("Traitement en cours...", expanded=True) as status:
         try:
+            # Note: pyinaturalist handles list of users automatically
             obs_list = get_observations(**params)['results']
         except Exception as e:
             st.error(f"Erreur iNaturalist : {e}")
+            st.stop()
+
+        if not obs_list:
+            st.warning("Aucune observation trouvée avec ces critères.")
             st.stop()
 
         st.write(f"Traitement de {len(obs_list)} observations...")
@@ -112,9 +152,12 @@ if run_import and NOTION_TOKEN and DATABASE_ID:
             if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
             if lat: props["latitude (sexadécimal)"] = {"number": lat}
             if lon: props["longitude (sexadécimal)"] = {"number": lon}
+            
+            # Place ID filter check (Visual confirmation)
+            if place_id_input:
+                 props["Place ID (Filtre)"] = {"rich_text": [{"text": {"content": place_id_input}}]} # Optional logging
 
             # 4. SEND TO NOTION
-            # Explicit parent type for API 2025 compatibility
             parent_obj = {"type": "database_id", "database_id": DATABASE_ID}
 
             try:
@@ -130,4 +173,4 @@ if run_import and NOTION_TOKEN and DATABASE_ID:
             bar.progress((i + 1) / len(obs_list))
 
         status.update(label="Importation terminée !", state="complete")
-        st.success("Synchronisation réussie.")
+        st.success(f"Synchronisation réussie de {len(obs_list)} observations.")
