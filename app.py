@@ -196,7 +196,7 @@ with tab1:
     with col_filters_3:
         # Quick Date Presets
         st.markdown("**📅 Date d'observation**")
-        c_q1, c_q2, c_q3 = st.columns(3)
+        c_q1, c_q2, c_q3, c_q4 = st.columns(4)
         today = date.today()
         
         if c_q1.button("Auj.", type="secondary", use_container_width=True, help="Aujourd'hui"):
@@ -204,13 +204,17 @@ with tab1:
             st.session_state.d_end = today
             st.rerun()
             
-        if c_q2.button("Sem.", type="secondary", use_container_width=True, help="Cette semaine (Lundi-Dimanche)"):
-            start_week = today - timedelta(days=today.weekday())
-            st.session_state.d_start = start_week
+        if c_q2.button("Sem.", type="secondary", use_container_width=True, help="7 derniers jours"):
+            st.session_state.d_start = today - timedelta(days=6)
+            st.session_state.d_end = today
+            st.rerun()
+
+        if c_q3.button("2 Sem.", type="secondary", use_container_width=True, help="14 derniers jours"):
+            st.session_state.d_start = today - timedelta(days=13)
             st.session_state.d_end = today
             st.rerun()
             
-        if c_q3.button("Mois", type="secondary", use_container_width=True, help="Ce mois-ci"):
+        if c_q4.button("Mois", type="secondary", use_container_width=True, help="Depuis le 1er du mois"):
             start_month = today.replace(day=1)
             st.session_state.d_start = start_month
             st.session_state.d_end = today
