@@ -210,18 +210,33 @@ if st.session_state.show_selection and st.session_state.search_results:
     # Extract unique dates
     all_dates = set()
     for obs in st.session_state.search_results:
+        # Priority 1: time_observed_at (datetime obj or string)
         d_val = obs.get('time_observed_at')
+        date_extracted = None
         
-        # Handle datetime object or string iso format
         if d_val:
             if hasattr(d_val, 'strftime'):
-                all_dates.add(d_val.strftime("%Y-%m-%d"))
-            elif isinstance(d_val, str):
-                # If it's a string like "2024-08-05 14:25:13" or "2024-08-05T14..."
-                # Take first 10 chars "2024-08-05"
-                all_dates.add(d_val[:10])
+                date_extracted = d_val.strftime("%Y-%m-%d")
+            else:
+                # Force string conversion and slice first 10 chars "YYYY-MM-DD"
+                date_extracted = str(d_val)[:10]
+        
+        # Priority 2: observed_on (usually string "YYYY-MM-DD")
+        if not date_extracted:
+            d_on = obs.get('observed_on')
+            if d_on:
+               date_extracted = str(d_on)[:10]
+
+        # Priority 3: observed_on_string (fallback)
+        if not date_extracted:
+             d_str_fallback = obs.get('observed_on_string')
+             if d_str_fallback:
+                 date_extracted = str(d_str_fallback)[:10]
+        
+        if date_extracted:
+            all_dates.add(date_extracted)
         else:
-            all_dates.add(obs.get('observed_on_string', 'N/A'))
+            all_dates.add("date_inconnue")
     
     sorted_dates = sorted(list(all_dates), reverse=True)
     
@@ -229,7 +244,6 @@ if st.session_state.show_selection and st.session_state.search_results:
     c_title.subheader(f"📋 Résultat : {len(st.session_state.search_results)} obs")
     
     # Use st.pills for "Etiquettes" (requires Streamlit 1.40+)
-    # Unique dates are already extracted ignoring time (strftime %Y-%m-%d)
     filter_date = c_filter.pills(
         "Filtrer par date", 
         options=["Tout"] + sorted_dates, 
@@ -244,17 +258,30 @@ if st.session_state.show_selection and st.session_state.search_results:
     # Filter Data
     visible_obs = []
     for obs in st.session_state.search_results:
-        # Get date str
+        # Same extraction logic for matching
         d_val = obs.get('time_observed_at')
+        date_extracted = None
+        
         if d_val:
             if hasattr(d_val, 'strftime'):
-                d_str = d_val.strftime("%Y-%m-%d")
-            elif isinstance(d_val, str):
-                d_str = d_val[:10]
-        else:
-            d_str = obs.get('observed_on_string', 'N/A')
+                date_extracted = d_val.strftime("%Y-%m-%d")
+            else:
+                date_extracted = str(d_val)[:10]
         
-        if filter_date == "Tout" or d_str == filter_date:
+        if not date_extracted:
+            d_on = obs.get('observed_on')
+            if d_on:
+               date_extracted = str(d_on)[:10]
+
+        if not date_extracted:
+             d_str_fallback = obs.get('observed_on_string')
+             if d_str_fallback:
+                 date_extracted = str(d_str_fallback)[:10]
+                 
+        if not date_extracted:
+            date_extracted = "date_inconnue"
+        
+        if filter_date == "Tout" or date_extracted == filter_date:
             visible_obs.append(obs)
 
     # Bulk Selection Buttons (Apply to VISIBLE only)
