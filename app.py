@@ -570,16 +570,16 @@ if st.session_state.show_selection and st.session_state.search_results:
         use_container_width=True,
         disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "Description", "GPS", "URL iNat", "Photo URL", "Image", "_original_obs"],
         key=f"editor{filter_key_suffix}",
-        on_select="rerun", # Enable selection events
-        selection_mode="single-row"
+        on_select="rerun" # Enable selection events. Note: selection_mode not supported in data_editor as of 1.40?
     )
     
     # 1. Handle Row Selection (Pop-up)
+    # Check if we have a selection
     if response.selection and response.selection['rows']:
         idx = response.selection['rows'][0]
         # Check bounds (just in case)
         if idx < len(df):
-            # Check if this is a NEW selection to avoid loop logic
+            # Check if this is a NEW selection
             if idx != st.session_state.last_selected_index:
                  st.session_state.last_selected_index = idx
                  row_data = df.iloc[idx]
@@ -589,8 +589,9 @@ if st.session_state.show_selection and st.session_state.search_results:
     
     # SYNC BACK TO STATE
     # Iterate over edited rows to update master state
-    if response is not None and not response.empty:
-        for index, row in response.iterrows():
+    # With on_select, response is a DataEditor object, access .data for DF
+    if response.data is not None and not response.data.empty:
+        for index, row in response.data.iterrows():
             # Use original ID for reliable mapping
             if '_original_obs' in row and isinstance(row['_original_obs'], dict):
                  o_id = row['_original_obs']['id']
