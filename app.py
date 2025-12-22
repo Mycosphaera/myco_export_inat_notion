@@ -656,6 +656,7 @@ if st.session_state.search_results:
                 st.warning("Aucune observation valide sélectionnée.")
             else: 
                     found_duplicates = []
+                    debug_details = [] # Fix NameError: Initialize early
                     
                     # 1. Fetch Database Schema to find "No Inat" or "URL" columns dynamically
                     # This avoids guessing the exact name or type (Number vs Text)
@@ -668,26 +669,38 @@ if st.session_state.search_results:
                         }
                         resp_db = requests.get(db_url, headers=headers)
                         target_props = []
+                        all_props_debug = []
+                        
                         if resp_db.status_code == 200:
                             props = resp_db.json().get('properties', {})
+                            all_props_debug = list(props.keys())
+                            
                             for name, config in props.items():
                                 name_lower = name.lower()
                                 # Auto-detect relevant columns
                                 if "inat" in name_lower or "url" in name_lower or "link" in name_lower or "id" in name_lower:
                                     target_props.append({"name": name, "type": config['type']})
                             
+                            # Fallback if detection fails but we know user has specific cols
+                            if not target_props:
+                                debug_details.append(f"Auto-detection empty. Fallback used. Available props: {all_props_debug}")
+                                target_props = [
+                                    {"name": "URL Inaturalist", "type": "url"}, 
+                                    {"name": "No Inat", "type": "rich_text"}
+                                ]
+                            
                             # Debug: Tell user what we found (verify mapping)
-                            st.caption(f"🕵️ Colonnes analysées dans Notion : {[p['name'] + ' (' + p['type'] + ')' for p in target_props]}")
+                            st.caption(f"🕵️ Colonnes scannées : {[p['name'] + ' (' + p['type'] + ')' for p in target_props]}")
                         else:
-                            st.error("Impossible de lire la structure de la base Notion.")
+                            st.error(f"Impossible de lire la structure Notion ({resp_db.status_code}). Utilisation configuration par défaut.")
                             target_props = [
                                 {"name": "URL Inaturalist", "type": "url"},
-                                {"name": "No Inat", "type": "number"}, # Fallback
                                 {"name": "No Inat", "type": "rich_text"}
                             ]
                     except Exception as e:
                         st.error(f"Erreur lors de l'analyse du schéma Notion : {e}")
                         target_props = []
+
 
                     # 2. Chunked Search
                     # Filter out Formula columns from the SEARCH query (Notion API limitation)
