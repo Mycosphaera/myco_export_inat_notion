@@ -67,7 +67,7 @@ with tab1:
                 try:
                     # Validate against API using Requests directly
                     # iNaturalist API v1 search
-                    url = f"https://api.inaturalist.org/v1/users?q={new_user}&per_page=5"
+                    url = f"https://api.inaturalist.org/v1/users/autocomplete?q={new_user}&per_page=5"
                     headers = {"User-Agent": "StreamlitMycoImport/1.0 (mathieu@example.com)"}
                     resp = requests.get(url, headers=headers)
                     
