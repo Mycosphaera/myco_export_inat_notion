@@ -706,7 +706,7 @@ if st.session_state.search_results:
                             
                             headers = {
                                 "Authorization": f"Bearer {NOTION_TOKEN}",
-                                "Notion-Version": "2022-06-28", # Revert to STABLE version (2025 version doesn't exist publicly)
+                                "Notion-Version": "2025-09-03", # Restored as requested
                                 "Content-Type": "application/json"
                             }
                             resp = requests.post(api_url, headers=headers, json={"filter": query_filter})
