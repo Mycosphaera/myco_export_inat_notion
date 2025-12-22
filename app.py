@@ -14,6 +14,8 @@ if 'search_results' not in st.session_state:
     st.session_state.search_results = []
 if 'show_selection' not in st.session_state:
     st.session_state.show_selection = False
+if 'select_all' not in st.session_state:
+    st.session_state.select_all = True # Default state
 
 # --- SECRETS MANAGEMENT ---
 try:
@@ -142,6 +144,13 @@ if st.session_state.show_selection and st.session_state.search_results:
     st.divider()
     st.subheader(f"📋 Résultat : {len(st.session_state.search_results)} observations")
     
+    # Bulk Selection Buttons
+    c_sel1, c_sel2, c_space = st.columns([1, 1, 4])
+    if c_sel1.button("✅ Tout sélectionner"):
+        st.session_state.select_all = True
+    if c_sel2.button("❌ Tout désélectionner"):
+        st.session_state.select_all = False
+        
     # Transform to DataFrame for Data Editor
     raw_data = []
     for obs in st.session_state.search_results:
@@ -159,7 +168,7 @@ if st.session_state.show_selection and st.session_state.search_results:
         img_url = obs.get('photos')[0]['url'].replace("square", "small") if obs.get('photos') else None
         
         raw_data.append({
-            "Import": True, # Default Checked
+            "Import": st.session_state.select_all, # Use global state
             "ID": obs['id'],
             "Taxon": taxon_name,
             "Date": date_str,
