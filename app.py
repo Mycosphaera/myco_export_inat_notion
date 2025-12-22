@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from pyinaturalist import get_observations, get_places_autocomplete
+from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_autocomplete
 from notion_client import Client
 from datetime import date
 
@@ -47,7 +47,23 @@ with tab1:
     with col_filters_1:
         st.markdown("**👤 Personne & Projet**")
         user_input = st.text_input("Utilisateur(s)", value=default_user, help="Séparez par des virgules")
-        taxon_id = st.text_input("ID Taxon (ex: 47169 Fungi)", value="47169")
+        
+        # --- TAXON SEARCH ENGINE ---
+        taxon_query = st.text_input("Chercher un taxon (ex: Fungi)", placeholder="ex: Fungi")
+        taxon_id = "47169" # Default to Fungi
+        
+        if taxon_query:
+            try:
+                taxa = get_taxa_autocomplete(q=taxon_query, per_page=10)
+                if taxa['results']:
+                    taxon_options = {f"{t['name']} ({t.get('preferred_common_name', 'No common name')}) - ID: {t['id']}": t['id'] for t in taxa['results']}
+                    selected_taxon_name = st.selectbox("🍄 Sélectionner le taxon :", options=taxon_options.keys())
+                    taxon_id = taxon_options[selected_taxon_name]
+                    st.success(f"Taxon: {taxon_id}")
+                else:
+                    st.warning("Aucun taxon trouvé.")
+            except Exception as e:
+                st.error(f"Erreur recherche taxon: {e}")
 
     with col_filters_2:
         st.markdown("**🌍 Lieu**")
