@@ -5,6 +5,27 @@ from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_au
 from notion_client import Client
 from datetime import date, timedelta
 
+# --- HELPER FUNCTIONS ---
+@st.dialog("🍄 Détails de l'observation")
+def show_details(obs_data):
+    # Large Image
+    if obs_data.get('Image'):
+        st.image(obs_data['Image'].replace("small", "large"), use_container_width=True)
+    
+    # Metadata Links
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"**Taxon:** {obs_data['Taxon']}")
+        st.markdown(f"**Date:** {obs_data['Date']}")
+    with c2:
+        st.link_button("Voir sur iNaturalist", obs_data['URL iNat'])
+        if obs_data.get('Photo URL'):
+             st.link_button("Voir Photo HD", obs_data['Photo URL'])
+
+    if obs_data.get('Description'):
+        st.caption("Description:")
+        st.write(obs_data['Description'])
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Importateur Myco-Notion", page_icon="🍄", layout="wide")
 st.title("🍄 Importateur iNaturalist → Notion")
@@ -23,6 +44,8 @@ if 'selection_states' not in st.session_state:
     st.session_state.selection_states = {} # Map ID -> bool
 if 'selected_users' not in st.session_state:
     st.session_state.selected_users = [] # List of verified usernames
+if 'last_selected_index' not in st.session_state:
+    st.session_state.last_selected_index = None
 
 # --- SECRETS MANAGEMENT ---
 try:
