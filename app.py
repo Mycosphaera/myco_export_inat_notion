@@ -94,16 +94,38 @@ with tab1:
 
     with col_filters_3:
         st.markdown("**📅 Date d'observation**")
-        date_mode = st.radio("Type de date", ["Période", "Date exacte", "Tout"], index=0)
+        date_mode = st.radio("Type de date", ["Période", "Date exacte", "Multi-dates", "Tout"], index=0)
         
         d1, d2 = None, None
+        
         if date_mode == "Date exacte":
             the_date = st.date_input("Date", value=date.today())
             d1, d2 = the_date, the_date
+            
         elif date_mode == "Période":
             c_start, c_end = st.columns(2)
             d1 = c_start.date_input("Du", value=date(2024, 1, 1))
             d2 = c_end.date_input("Au", value=date.today())
+            
+        elif date_mode == "Multi-dates":
+            c_add, c_btn = st.columns([2, 1])
+            new_date = c_add.date_input("Ajouter une date", value=date.today(), label_visibility="collapsed")
+            if c_btn.button("Ajouter", use_container_width=True):
+                if new_date not in st.session_state.custom_dates:
+                    st.session_state.custom_dates.append(new_date)
+                    st.session_state.custom_dates.sort()
+            
+            if st.session_state.custom_dates:
+                st.caption("Dates sélectionnées :")
+                # Display simply
+                cols = st.columns(min(len(st.session_state.custom_dates), 4) or 1)
+                for i, d in enumerate(st.session_state.custom_dates):
+                    st.code(d.strftime("%Y-%m-%d"))
+                
+                if st.button("🗑️ Effacer tout", type="secondary"):
+                    st.session_state.custom_dates = []
+            else:
+                st.info("Aucune date ajoutée.")
 
     st.divider()
     
@@ -132,10 +154,41 @@ with tab2:
 if run_search:
     with st.spinner("Recherche sur iNaturalist..."):
         try:
-            results = get_observations(**params)['results']
-            st.session_state.search_results = results
+            results = []
+            
+            # MULTI-DATE LOGIC
+            if date_mode == "Multi-dates" and st.session_state.custom_dates:
+                for d in st.session_state.custom_dates:
+                    p = params.copy()
+                    p['on'] = d # Specific API parameter for single date
+                    # Remove d1/d2 if present to avoid conflict (though params logic above leaves them None)
+                    p.pop('d1', None) 
+                    p.pop('d2', None)
+                    
+                    batch = get_observations(**p)['results']
+                    results.extend(batch)
+            else:
+                # Standard Search
+                results = get_observations(**params)['results']
+            
+            # Remove potential duplicates based on ID
+            seen_ids = set()
+            unique_results = []
+            for r in results:
+                if r['id'] not in seen_ids:
+                    unique_results.append(r)
+                    seen_ids.add(r['id'])
+            
+            # SORT BY DATE (New Requirement)
+            # Handle None dates safely by putting them last
+            unique_results.sort(
+                key=lambda x: x.get('time_observed_at').isoformat() if x.get('time_observed_at') else "0000-00-00", 
+                reverse=True
+            )
+            
+            st.session_state.search_results = unique_results
             st.session_state.show_selection = True
-            if not results:
+            if not unique_results:
                 st.warning("Aucune observation trouvée.")
         except Exception as e:
             st.error(f"Erreur iNaturalist : {e}")
