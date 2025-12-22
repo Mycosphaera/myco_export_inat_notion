@@ -566,7 +566,11 @@ if st.session_state.show_selection and st.session_state.search_results:
     filter_key_suffix = "_all" if not filter_dates else "_" + "_".join(sorted(filter_dates))
     
     # Show Data Editor (Editable Checkboxes)
-    # Generate unique key string from sorted selected dates
+    # Generate unique key string from sorted selected dates AND a version counter
+    # This version counter forces a reset of the editor when we programmatically change values (like unchecking duplicates)
+    if "editor_key_version" not in st.session_state:
+        st.session_state.editor_key_version = 0
+        
     filter_key_suffix = "_all" if not filter_dates else "_" + "_".join(sorted(filter_dates))
     
     # We remove 'on_select' to fix the TypeError crash.
@@ -577,7 +581,7 @@ if st.session_state.show_selection and st.session_state.search_results:
         hide_index=True,
         use_container_width=True,
         disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "Description", "GPS", "URL iNat", "Photo URL", "Image", "_original_obs"],
-        key=f"editor{filter_key_suffix}"
+        key=f"editor{filter_key_suffix}_v{st.session_state.editor_key_version}"
     )
     
     # 2. Logic: Detect Changes & Trigger Pop-up
@@ -671,6 +675,9 @@ if st.session_state.show_selection and st.session_state.search_results:
                     
                     # Set Message and Rerun
                     if found_duplicates:
+                        # Increment version to force data_editor to reload from session_state
+                        st.session_state.editor_key_version += 1
+                        
                         st.session_state.dup_msg = {
                             "type": "warning", 
                             "text": f"⚠️ {len(found_duplicates)} doublons trouvés et décochés de la liste : {', '.join(found_duplicates)}"
