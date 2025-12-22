@@ -563,19 +563,38 @@ if st.session_state.show_selection and st.session_state.search_results:
     # Generate unique key string from sorted selected dates
     filter_key_suffix = "_all" if not filter_dates else "_" + "_".join(sorted(filter_dates))
     
-    edited_df = st.data_editor(
+    response = st.data_editor(
         df,
         column_config=column_config,
         hide_index=True,
         use_container_width=True,
-        disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "Description", "GPS", "Image"],
-        key=f"editor{filter_key_suffix}" # Unique key to reset state on filter change
+        disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "Description", "GPS", "URL iNat", "Photo URL", "Image", "_original_obs"],
+        key=f"editor{filter_key_suffix}",
+        on_select="rerun", # Enable selection events
+        selection_mode="single-row"
     )
+    
+    # 1. Handle Row Selection (Pop-up)
+    if response.selection and response.selection['rows']:
+        idx = response.selection['rows'][0]
+        # Check bounds (just in case)
+        if idx < len(df):
+            # Check if this is a NEW selection to avoid loop logic
+            if idx != st.session_state.last_selected_index:
+                 st.session_state.last_selected_index = idx
+                 row_data = df.iloc[idx]
+                 show_details(row_data) # Open the dialog
+    else:
+        st.session_state.last_selected_index = None
     
     # SYNC BACK TO STATE
     # Iterate over edited rows to update master state
-    for index, row in edited_df.iterrows():
-        st.session_state.selection_states[row['ID']] = row['Import']
+    if response is not None and not response.empty:
+        for index, row in response.iterrows():
+            # Use original ID for reliable mapping
+            if '_original_obs' in row and isinstance(row['_original_obs'], dict):
+                 o_id = row['_original_obs']['id']
+                 st.session_state.selection_states[o_id] = row['Import']
     
     # Count total selected
     total_selected = sum(st.session_state.selection_states.values())
