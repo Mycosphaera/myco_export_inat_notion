@@ -652,163 +652,86 @@ if st.session_state.search_results:
         if col_dup.button("🕵️ Vérifier doublons", type="secondary", disabled=dup_disabled):
             st.session_state.dup_msg = None
             ids_to_check = [str(oid) for oid, is_sel in st.session_state.selection_states.items() if is_sel and oid in current_ids]
-            if not ids_to_check:
-                st.warning("Aucune observation valide sélectionnée.")
-            else: 
+                if not ids_to_check:
+                    st.warning("Aucune observation valide sélectionnée.")
+                else: 
                     found_duplicates = []
-                    debug_details = [] # Fix NameError: Initialize early
+                    error_occurred = False # Flag to prevent auto-rerun if error
                     
-                    # 1. Fetch Database Schema to find "No Inat" or "URL" columns dynamically
-                    # This avoids guessing the exact name or type (Number vs Text)
-                    try:
-                        db_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
-                        headers = {
-                            "Authorization": f"Bearer {NOTION_TOKEN}",
-                            "Notion-Version": "2025-09-03",
-                            "Content-Type": "application/json"
-                        }
-                        resp_db = requests.get(db_url, headers=headers)
-                        target_props = []
-                        all_props_debug = []
-                        
-                        if resp_db.status_code == 200:
-                            props = resp_db.json().get('properties', {})
-                            all_props_debug = list(props.keys())
-                            
-                            for name, config in props.items():
-                                name_lower = name.lower()
-                                # Auto-detect relevant columns
-                                if "inat" in name_lower or "url" in name_lower or "link" in name_lower or "id" in name_lower:
-                                    target_props.append({"name": name, "type": config['type']})
-                            
-                            # Fallback if detection fails but we know user has specific cols
-                            if not target_props:
-                                debug_details.append(f"Auto-detection empty. Fallback used. Available props: {all_props_debug}")
-                                target_props = [
-                                    {"name": "URL Inaturalist", "type": "url"}, 
-                                    {"name": "No Inat", "type": "rich_text"}
-                                ]
-                            
-                            # Debug: Tell user what we found (verify mapping)
-                            st.caption(f"🕵️ Colonnes scannées : {[p['name'] + ' (' + p['type'] + ')' for p in target_props]}")
-                        else:
-                            st.error(f"Impossible de lire la structure Notion ({resp_db.status_code}). Utilisation configuration par défaut.")
-                            target_props = [
-                                {"name": "URL Inaturalist", "type": "url"},
-                                {"name": "No Inat", "type": "rich_text"}
-                            ]
-                    except Exception as e:
-                        st.error(f"Erreur lors de l'analyse du schéma Notion : {e}")
-                        target_props = []
-
-
-                    # 2. Chunked Search
-                    # Filter out Formula columns from the SEARCH query (Notion API limitation)
-                    # We can only search in specific types: number, text, url, select, etc.
-                    searchable_props = [p for p in target_props if p['type'] not in ['formula', 'rollup']]
+                    # SIMPLIFIED LOGIC: Strict URL Search (User Request)
+                    # We assume column is "URL Inaturalist" (Type URL)
+                    # We also keep "URL iNat" as legacy/variant fallback just in case
+                    target_cols = ["URL Inaturalist", "URL iNat"]
                     
-                    if not searchable_props:
-                        st.error("❌ Impossible de chercher : La colonne 'No Inat' semble être une formule. L'API Notion ne permet pas de chercher dans les formules. Assurez-vous d'avoir une colonne 'URL' ou 'Texte' contenant le lien ou l'ID.")
-                    else:
-                        chunk_size = 20
-                        # st.info(f"Recherche dans les colonnes : {[p['name'] for p in searchable_props]}") # Debug info
+                    chunk_size = 20
+                    for i in range(0, len(ids_to_check), chunk_size):
+                        chunk = ids_to_check[i:i + chunk_size]
                         
-                        # Debug container
-                        debug_details = []
-                        
-                        for i in range(0, len(ids_to_check), chunk_size):
-                            chunk = ids_to_check[i:i + chunk_size]
+                        or_filters = []
+                        for cid in chunk:
+                            cid = str(cid).strip()
+                            full_url = f"https://www.inaturalist.org/observations/{cid}"
                             
-                            or_filters = []
-                            for prop in searchable_props:
-                                p_name = prop['name']
-                                p_type = prop['type']
-                                
-                                for cid in chunk:
-                                    cid = str(cid).strip()
-                                    full_url = f"https://www.inaturalist.org/observations/{cid}"
+                            for col_name in target_cols:
+                                # 1. Check if URL contains ID
+                                or_filters.append({"property": col_name, "url": {"contains": cid}})
+                                # 2. Check if URL equals Full URL
+                                or_filters.append({"property": col_name, "url": {"equals": full_url}})
+                        
+                        query_filter = {"or": or_filters}
+                        
+                        try:
+                            api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+                            headers = {
+                                "Authorization": f"Bearer {NOTION_TOKEN}",
+                                "Notion-Version": "2025-09-03",
+                                "Content-Type": "application/json"
+                            }
+                            resp = requests.post(api_url, headers=headers, json={"filter": query_filter})
+                            
+                            if resp.status_code == 200:
+                                q_data = resp.json()
+                                for page in q_data.get('results', []):
+                                    props = page.get('properties', {})
                                     
-                                    # Strategy 1: Contains ID (Broad)
-                                    if p_type == "url":
-                                        or_filters.append({"property": p_name, "url": {"contains": cid}})
-                                        # Strategy 2: Exact Full URL (Precise - User Configured)
-                                        or_filters.append({"property": p_name, "url": {"equals": full_url}})
-                                    elif p_type == "number":
-                                        if cid.isdigit():
-                                            or_filters.append({"property": p_name, "number": {"equals": int(cid)}})
-                                    elif p_type in ["rich_text", "title"]:
-                                        or_filters.append({"property": p_name, p_type: {"contains": cid}})
-                                        # Also match full URL in text just in case
-                                        or_filters.append({"property": p_name, p_type: {"equals": full_url}})
-                            
-                            if not or_filters:
-                                 break
-                                 
-                            query_filter = {"or": or_filters}
-                            debug_details.append(f"Query Batch {i//chunk_size}: checking {len(chunk)} IDs against {len(searchable_props)} columns.")
-                            
-                            try:
-                                api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-                                resp = requests.post(api_url, headers=headers, json={"filter": query_filter})
-                                
-                                if resp.status_code == 200:
-                                    q_data = resp.json()
-                                    for page in q_data.get('results', []):
-                                        page_props = page.get('properties', {})
+                                    # Verification
+                                    # Check our target URL columns
+                                    found_urls = []
+                                    for col_name in target_cols:
+                                        u_obj = props.get(col_name)
+                                        if u_obj and u_obj.get('type') == 'url':
+                                            u_val = u_obj.get('url')
+                                            if u_val: found_urls.append(str(u_val))
+                                    
+                                    # Match against chunk IDs
+                                    for cid in chunk:
+                                        cid = str(cid).strip()
+                                        full_url = f"https://www.inaturalist.org/observations/{cid}"
                                         
-                                        # Flatten properties to string values
-                                        all_values = []
-                                        for p_key, p_val in page_props.items():
-                                            # Helper to extract value regardless of type
-                                            v = ""
-                                            pt = p_val.get('type')
-                                            if pt == 'url': v = p_val.get('url', '')
-                                            elif pt == 'number': v = str(p_val.get('number', ''))
-                                            elif pt in ['rich_text', 'title']:
-                                                raw = p_val.get(pt, [])
-                                                v = raw[0].get('plain_text', '') if raw else ''
-                                            elif pt == 'formula':
-                                                f_res = p_val.get('formula', {})
-                                                f_type = f_res.get('type')
-                                                if f_type == 'string': v = f_res.get('string', '')
-                                                elif f_type == 'number': v = str(f_res.get('number', ''))
-                                            
-                                            if v: all_values.append(str(v))
-                                        
-                                        # Verification
-                                        for cid in chunk:
-                                            cid = str(cid).strip()
-                                            full_url = f"https://www.inaturalist.org/observations/{cid}"
-                                            
-                                            for val in all_values:
-                                                if val and (cid in val or full_url == val):
-                                                    found_duplicates.append(cid)
-                                                    
-                                else:
-                                    st.error(f"Erreur API Notion ({resp.status_code}): {resp.text}")
-                            except Exception as e:
-                                st.error(f"Erreur requête : {e}")
-                    
-                    # Remove duplicates from list to avoid repeating same ID
-                    found_duplicates = list(set(found_duplicates))
-                    
-                    if found_duplicates:
-                        st.session_state.found_duplicates_list = found_duplicates
-                        st.session_state.dup_msg = {"type": "warning", "text": f"⚠️ {len(found_duplicates)} doublons trouvés."}
-                    else:
-                        st.session_state.found_duplicates_list = []
-                        st.session_state.dup_msg = {"type": "success", "text": "✅ 0 doublon."}
+                                        for f_url in found_urls:
+                                            if f_url and (cid in f_url or full_url == f_url):
+                                                found_duplicates.append(cid)
+                                                
+                            else:
+                                st.error(f"Erreur API Notion ({resp.status_code}) : {resp.text}")
+                                error_occurred = True
+                                break # Stop strict
+                        except Exception as e:
+                            st.error(f"Erreur requête : {e}")
+                            error_occurred = True
+                            break
+
+                    if not error_occurred:
+                        # Remove duplicates from list
+                        found_duplicates = list(set(found_duplicates))
                         
-                        # Show Debug info only if failed and requested or implicit? 
-                        # Let's show expandable debug info always for transparency if users are confused
-                        with st.expander("ℹ️ Détails du diagnostic Notion"):
-                            st.write("Colonnes scannées :", [p['name'] + ' (' + p['type'] + ')' for p in searchable_props])
-                            st.write("Logs :", debug_details)
-                            if ids_to_check:
-                                st.write("Exemple ID cherché :", ids_to_check[0])
-                                st.write("Exemple URL complète :", f"https://www.inaturalist.org/observations/{ids_to_check[0]}")
-                    
-                    st.rerun()
+                        if found_duplicates:
+                            st.session_state.found_duplicates_list = found_duplicates
+                            st.session_state.dup_msg = {"type": "warning", "text": f"⚠️ {len(found_duplicates)} doublons trouvés."}
+                        else:
+                            st.session_state.found_duplicates_list = []
+                            st.session_state.dup_msg = {"type": "success", "text": "✅ 0 doublon."}
+                        st.rerun()
 
     if st.button("📤 Importer vers Notion", type="primary"):
         # Robust Import Logic using STATE
