@@ -652,9 +652,9 @@ if st.session_state.search_results:
         if col_dup.button("🕵️ Vérifier doublons", type="secondary", disabled=dup_disabled):
             st.session_state.dup_msg = None
             ids_to_check = [str(oid) for oid, is_sel in st.session_state.selection_states.items() if is_sel and oid in current_ids]
-                if not ids_to_check:
-                    st.warning("Aucune observation valide sélectionnée.")
-                else: 
+            if not ids_to_check:
+                st.warning("Aucune observation valide sélectionnée.")
+            else: 
                     found_duplicates = []
                     
                     # 1. Fetch Database Schema to find "No Inat" or "URL" columns dynamically
