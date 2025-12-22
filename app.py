@@ -16,6 +16,8 @@ if 'show_selection' not in st.session_state:
     st.session_state.show_selection = False
 if 'select_all' not in st.session_state:
     st.session_state.select_all = True # Default state
+if 'custom_dates' not in st.session_state:
+    st.session_state.custom_dates = []
 
 # --- SECRETS MANAGEMENT ---
 try:
