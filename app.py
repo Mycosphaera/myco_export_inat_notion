@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_autocomplete, get_users
+import requests
+from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_autocomplete
 from notion_client import Client
 from datetime import date
 
@@ -64,21 +65,22 @@ with tab1:
         if c_usr_add.button("➕", help="Ajouter l'utilisateur"):
             if new_user:
                 try:
-                    # Validate against API
-                    u_results = get_users(q=new_user, per_page=5)
+                    # Validate against API using Requests directly (to avoid dependency version issues)
+                    # iNaturalist API v1 search
+                    url = f"https://api.inaturalist.org/v1/users?q={new_user}&per_page=5"
+                    resp = requests.get(url)
+                    data = resp.json()
+                    
                     # Check exact match or close enough (API fuzzy searches)
-                    # We want to be sure it exists.
                     valid_user = None
-                    if u_results['results']:
-                        # Check strict case-insensitive match for safety, or allow user to pick?
-                        # User wants explicitly "false name -> error".
-                        matches = [u['login'] for u in u_results['results'] if u['login'].lower() == new_user.lower()]
+                    if 'results' in data and data['results']:
+                        # Check strict case-insensitive match
+                        matches = [u['login'] for u in data['results'] if u['login'].lower() == new_user.lower()]
                         if matches:
                             valid_user = matches[0]
                         else:
-                            # Maybe they meant the first result?
-                            # Strict is safer for "false name" check.
-                            pass
+                             # Optional: If exact match not found but results exist, could suggest?
+                             pass
                     
                     if valid_user:
                         if valid_user not in st.session_state.selected_users:
