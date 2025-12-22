@@ -653,10 +653,12 @@ if st.session_state.show_selection and st.session_state.search_results:
                     query_filter = {"or": or_filters}
                     
                     try:
-                        # Query Notion
-                        q_resp = notion.databases.query(
-                            database_id=DATABASE_ID,
-                            filter=query_filter
+                        # Query Notion using direct request to avoid AttributeError on 'query' check
+                        # Path: https://api.notion.com/v1/databases/{id}/query
+                        q_resp = notion.request(
+                            path=f"databases/{DATABASE_ID}/query",
+                            method="POST",
+                            body={"filter": query_filter}
                         )
                         
                         # Process results to see WHICH ones matched
