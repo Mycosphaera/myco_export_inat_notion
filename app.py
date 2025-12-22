@@ -671,10 +671,14 @@ if st.session_state.show_selection and st.session_state.search_results:
                 coords = obs.get('location')
                 if coords:
                     try:
-                        parts = coords.split(',')
-                        lat = float(parts[0])
-                        lon = float(parts[1])
-                    except (ValueError, IndexError):
+                        if isinstance(coords, str):
+                            parts = coords.split(',')
+                            lat = float(parts[0])
+                            lon = float(parts[1])
+                        elif isinstance(coords, list) and len(coords) >= 2:
+                            lat = float(coords[0])
+                            lon = float(coords[1])
+                    except (ValueError, IndexError, TypeError):
                         pass # Keep None
 
                 photos = obs.get('photos', [])
