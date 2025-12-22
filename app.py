@@ -514,7 +514,14 @@ if st.session_state.show_selection and st.session_state.search_results:
              # Safe extraction logic (Static)
             taxon_name = obs.get('taxon', {}).get('name') if obs.get('taxon') else "Inconnu"
             obs_date = obs.get('time_observed_at')
-            date_str = obs_date.strftime("%Y-%m-%d") if obs_date else str(obs.get('observed_on_string', 'N/A'))
+            # Robust Date: Check if it's a datetime object or string
+            if obs_date and hasattr(obs_date, 'strftime'):
+                date_str = obs_date.strftime("%Y-%m-%d")
+            elif obs_date:
+                date_str = str(obs_date)[:10]
+            else:
+                date_str = str(obs.get('observed_on_string', 'N/A'))
+            
             place = obs.get('place_guess', 'N/A')
             img_url = obs.get('photos')[0]['url'].replace("square", "small") if obs.get('photos') else None
             user_login = obs.get('user', {}).get('login', 'N/A')
