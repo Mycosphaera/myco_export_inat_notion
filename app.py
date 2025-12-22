@@ -665,6 +665,13 @@ if st.session_state.search_results:
                     for cid in chunk:
                          or_filters.append({"property": "URL Inaturalist", "url": {"contains": cid}})
                          or_filters.append({"property": "URL iNat", "url": {"contains": cid}})
+                         # Support 'No Inat' column (User request) - Try Number and Text logic
+                         # If it's a number property:
+                         if cid.isdigit():
+                            or_filters.append({"property": "No Inat", "number": {"equals": int(cid)}})
+                         # If it's a text/title property:
+                         or_filters.append({"property": "No Inat", "rich_text": {"equals": cid}})
+                         or_filters.append({"property": "No Inat", "title": {"equals": cid}})
                          
                     query_filter = {"or": or_filters}
                     
@@ -677,14 +684,28 @@ if st.session_state.search_results:
                             q_data = resp.json()
                             for page in q_data.get('results', []):
                                 props = page.get('properties', {})
-                                # Check BOTH possible keys in response to be safe
-                                # Also check standard 'url' property if it exists?
+                                # Check all possible keys in response to be safe
+                                # URL props
                                 url_obj = props.get('URL Inaturalist') or props.get('URL iNat') or props.get('Lien iNat')
                                 url_val = url_obj.get('url', '') if url_obj else ''
-                                if url_val:
-                                    for cid in chunk:
-                                        if cid in url_val:
-                                            found_duplicates.append(cid)
+                                
+                                # 'No Inat' prop (Number or Text)
+                                no_inat_val = None
+                                no_inat_obj = props.get('No Inat')
+                                if no_inat_obj:
+                                    if no_inat_obj['type'] == 'number':
+                                        no_inat_val = str(no_inat_obj.get('number', ''))
+                                    elif no_inat_obj['type'] == 'rich_text':
+                                        rt = no_inat_obj.get('rich_text', [])
+                                        no_inat_val = rt[0].get('plain_text', '') if rt else ''
+                                    elif no_inat_obj['type'] == 'title':
+                                        rt = no_inat_obj.get('title', [])
+                                        no_inat_val = rt[0].get('plain_text', '') if rt else ''
+                                
+                                # Check match
+                                for cid in chunk:
+                                    if (url_val and cid in url_val) or (no_inat_val and cid == str(no_inat_val)):
+                                        found_duplicates.append(cid)
                     except Exception: pass # Fail silently on chunk errors
                 
                 # Remove duplicates from list to avoid repeating same ID
