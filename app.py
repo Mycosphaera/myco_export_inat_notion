@@ -45,8 +45,9 @@ if 'selection_states' not in st.session_state:
     st.session_state.selection_states = {} # Map ID -> bool
 if 'selected_users' not in st.session_state:
     st.session_state.selected_users = [] # List of verified usernames
-if 'last_selected_index' not in st.session_state:
     st.session_state.last_selected_index = None
+if 'editor_key_version' not in st.session_state:
+    st.session_state.editor_key_version = 0
 
 # --- SECRETS MANAGEMENT ---
 try:
