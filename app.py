@@ -581,6 +581,9 @@ if st.session_state.show_selection and st.session_state.search_results:
     # Key includes version to force reload only when strictly needed (external updates)
     filter_key_suffix = "_all" if not filter_dates else "_" + "_".join(sorted(filter_dates))
     base_key = f"editor{filter_key_suffix}"
+    
+    if "editor_key_version" not in st.session_state:
+        st.session_state.editor_key_version = 0
     # Use version only if strictly necessary to clear stale internal state?
     # Actually, if we use a static key, Streamlit might hold onto "Import" column state even if we change the DF content underlying it?
     # No, if DF changes, editor should update. 
