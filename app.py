@@ -67,7 +67,7 @@ with st.sidebar:
 
 # --- NOTION CLIENT ---
 if NOTION_TOKEN:
-    notion = Client(auth=NOTION_TOKEN)
+    notion = Client(auth=NOTION_TOKEN, notion_version="2025-09-03")
 
 # --- INTERFACE ---
 tab1, tab2 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs"])
