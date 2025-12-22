@@ -65,11 +65,17 @@ with tab1:
         if c_usr_add.button("➕", help="Ajouter l'utilisateur"):
             if new_user:
                 try:
-                    # Validate against API using Requests directly (to avoid dependency version issues)
+                    # Validate against API using Requests directly
                     # iNaturalist API v1 search
                     url = f"https://api.inaturalist.org/v1/users?q={new_user}&per_page=5"
-                    resp = requests.get(url)
-                    data = resp.json()
+                    headers = {"User-Agent": "StreamlitMycoImport/1.0 (mathieu@example.com)"}
+                    resp = requests.get(url, headers=headers)
+                    
+                    if resp.status_code == 200:
+                        data = resp.json()
+                    else:
+                        st.error(f"Erreur HTTP {resp.status_code} de l'API iNaturalist.")
+                        data = {}
                     
                     # Check exact match or close enough (API fuzzy searches)
                     valid_user = None
