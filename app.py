@@ -77,7 +77,7 @@ with tab1:
             try:
                 places = get_places_autocomplete(q=place_query, per_page=10)
                 if places['results']:
-                    place_options = {f"{p['display_name']} ({p['place_type_name']})": p['id'] for p in places['results']}
+                    place_options = {f"{p['display_name']} ({p.get('place_type_name', 'Type inconnu')})": p['id'] for p in places['results']}
                     selected_name = st.selectbox("📍 Sélectionner le lieu exact :", options=place_options.keys())
                     selected_place_id = place_options[selected_name]
                     st.success(f"Lieu sélectionné : ID {selected_place_id}")
@@ -147,8 +147,14 @@ if st.session_state.show_selection and st.session_state.search_results:
     for obs in st.session_state.search_results:
         # Safe extraction for display
         taxon_name = obs.get('taxon', {}).get('name') if obs.get('taxon') else "Inconnu"
+        
+        # Robust Date extraction
         obs_date = obs.get('time_observed_at')
-        date_str = obs_date.strftime("%Y-%m-%d") if obs_date else "N/A"
+        if obs_date:
+            date_str = obs_date.strftime("%Y-%m-%d")
+        else:
+            date_str = obs.get('observed_on_string', 'N/A')
+            
         place = obs.get('place_guess', 'N/A')
         img_url = obs.get('photos')[0]['url'].replace("square", "small") if obs.get('photos') else None
         
