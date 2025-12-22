@@ -584,28 +584,23 @@ if st.session_state.show_selection and st.session_state.search_results:
     # We compare the current editor state with our session_state to detect NEWLY checked items.
     if response is not None and not response.empty:
         # Iterate to find changes
-        for index, row in response.iterrows():
-             # Fix TypeError: _original_obs might be stringified by data_editor.
-             # Use the explicit 'ID' column (string) and convert to int.
-             try:
-                 o_id = int(str(row['ID']).replace(",","")) # Remove commas just in case, though we cleaned it
-                 is_checked = row['Import']
-                 
-                 old_state = st.session_state.selection_states.get(o_id, False) # Default to false if unknown
-                 
-                 if is_checked and not old_state:
-                     # This row was JUST checked. Show Details!
-                     # For the dialog, we need the full data. 
-                     # We can get it from the original df using the index? 
-                     # Or pass the row if it has the display fields.
-                     # show_details expects dict-like with 'Image', 'Taxon', etc.
-                     # 'row' from iterrows is a Series, which works fine.
-                     show_details(row)
-                 
-                 # Update State
-                st.session_state.selection_states[o_id] = is_checked
-            except ValueError:
-                pass # Skip if ID issue
+            for index, row in response.iterrows():
+                # Fix TypeError: _original_obs might be stringified by data_editor.
+                try:
+                    o_id = int(str(row['ID']).replace(",","")) 
+                    is_checked = row['Import']
+                    
+                    old_state = st.session_state.selection_states.get(o_id, False) 
+                    
+                    if is_checked and not old_state:
+                         # This row was JUST checked.
+                         # show_details(row) # Removed to avoid popup annoyance/bugs
+                         pass
+                    
+                    # Update State
+                    st.session_state.selection_states[o_id] = is_checked
+                except ValueError:
+                    pass # Skip if ID issue
 
     # 3. Count total checked FROM STATE (Source of Truth)
     # Filter keys in selection_states that are True AND exist in current search results
