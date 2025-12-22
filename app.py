@@ -218,10 +218,21 @@ if st.session_state.show_selection and st.session_state.search_results:
     
     sorted_dates = sorted(list(all_dates), reverse=True)
     
-    c_title, c_filter = st.columns([2, 1])
-    c_title.subheader(f"📋 Résultat : {len(st.session_state.search_results)} observations")
+    c_title, c_filter = st.columns([1, 2])
+    c_title.subheader(f"📋 Résultat : {len(st.session_state.search_results)} obs")
     
-    filter_date = c_filter.selectbox("Filtrer par date", ["Tout"] + sorted_dates)
+    # Use st.pills for "Etiquettes" (requires Streamlit 1.40+)
+    # Unique dates are already extracted ignoring time (strftime %Y-%m-%d)
+    filter_date = c_filter.pills(
+        "Filtrer par date", 
+        options=["Tout"] + sorted_dates, 
+        default="Tout", 
+        selection_mode="single",
+        label_visibility="collapsed"
+    )
+    
+    if not filter_date: 
+        filter_date = "Tout" # Fallback if deselected
     
     # Filter Data
     visible_obs = []
