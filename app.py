@@ -731,8 +731,7 @@ if st.session_state.show_selection and st.session_state.search_results:
                         cover={"external": {"url": cover_url}} if cover_url else None
                     )
                 except Exception as e:
-                    current_version = notion.options.get('notion_version', 'Unknown')
-                    st.warning(f"Erreur Notion sur {sci_name}: {e} (API Version: {current_version})")
+                    st.warning(f"Erreur Notion sur {sci_name}: {e}")
                     # Provide hint on common error
                     if "multiple data sources" in str(e):
                         st.caption("ℹ️ Note: Cette erreur indique souvent que la base de données cible est complexe (Synchronisée, Vue liée, ou Data Source). Assurez-vous de cibler la base originale et que l'API supporte ce type.")
