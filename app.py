@@ -568,51 +568,62 @@ if st.session_state.show_selection and st.session_state.search_results:
     # Generate unique key string from sorted selected dates
     filter_key_suffix = "_all" if not filter_dates else "_" + "_".join(sorted(filter_dates))
     
-    # We use data_editor to allow checking the box
-    # We remove 'selection_mode' as it causes issues in some versions with data_editor
+    # We remove 'on_select' to fix the TypeError crash.
+    # We restore standard data_editor behavior.
     response = st.data_editor(
         df,
         column_config=column_config,
         hide_index=True,
         use_container_width=True,
         disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "Description", "GPS", "URL iNat", "Photo URL", "Image", "_original_obs"],
-        key=f"editor{filter_key_suffix}",
-        on_select="rerun" 
+        key=f"editor{filter_key_suffix}"
     )
     
-    # 1. Handle Selection (Pop-up)
-    # Using on_select with data_editor allows row clicks too
-    if response.selection and response.selection['rows']:
-        idx = response.selection['rows'][0]
-        if idx < len(df):
-            if idx != st.session_state.last_selected_index:
-                 st.session_state.last_selected_index = idx
-                 row_data = df.iloc[idx]
-                 show_details(row_data)
-    else:
-        st.session_state.last_selected_index = None
+    # 2. Logic: Detect Changes & Trigger Pop-up
+    # We compare the current editor state with our session_state to detect NEWLY checked items.
+    # This serves as our "Click to View" mechanism.
+    if response is not None and not response.empty:
+        # Iterate to find changes
+        for index, row in response.iterrows():
+             if '_original_obs' in row:
+                 o_id = row['_original_obs']['id']
+                 is_checked = row['Import']
+                 
+                 # Check if this state is different from known state
+                 # If it goes False -> True, we show details (Preview)
+                 # If it goes True -> False, we just update.
+                 # If it wasn't in state (new load), we treat as no-change unless default?
+                 
+                 old_state = st.session_state.selection_states.get(o_id, False) # Default to false if unknown
+                 
+                 if is_checked and not old_state:
+                     # This row was JUST checked. Show Details!
+                     # Update state first to avoid loop?
+                     # No, show_details is a dialog.
+                     show_details(row)
+                 
+                 # Update State
+                 st.session_state.selection_states[o_id] = is_checked
 
-    # 2. Count total checked (visual feedback)
-    # Access the edited data directly
-    edited_df = response.data
-    total_checked = int(edited_df['Import'].sum()) if not edited_df.empty else 0
+    # 3. Count total checked (visual feedback)
+    # Re-calculate from robust session state or editor?
+    # Editor is the source of truth for the current render.
+    total_checked = int(response['Import'].sum()) if not response.empty else 0
     st.info(f"{total_checked} observations sélectionnées pour l'import.")
     
     if st.button("📤 Importer vers Notion", type="primary"):
-        # Robust Import Logic: Read directly from the Edited Dataframe
-        if not edited_df.empty:
-            # Get IDs of rows where Import is True
-            # We cast to string to match robustly
-            checked_rows = edited_df[edited_df['Import'] == True]
-            checked_ids = set(checked_rows['ID'].astype(str))
-            
-            # Filter the source list (preserves full object data)
-            ids_to_import = [
-                obs for obs in st.session_state.search_results 
-                if str(obs['id']) in checked_ids
-            ]
-        else:
-            ids_to_import = []
+        # Robust Import Logic: Read from Session State (synced above)
+        # OR read directly from response to be safe.
+        ids_to_import = []
+        if not response.empty:
+            checked_rows = response[response['Import'] == True]
+            if not checked_rows.empty:
+                # Map back to full objects
+                 checked_ids = set(checked_rows['ID'].astype(str))
+                 ids_to_import = [
+                    obs for obs in st.session_state.search_results 
+                    if str(obs['id']) in checked_ids
+                ]
         
         if not ids_to_import:
             st.warning("Aucune observation sélectionnée.")
