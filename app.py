@@ -644,7 +644,8 @@ if st.session_state.show_selection and st.session_state.search_results:
                 # --- DATA EXTRACTION & MAPPING ---
                 user_name = obs.get('user', {}).get('login', '')
                 observed_on = obs.get('time_observed_at')
-                date_iso = observed_on.isoformat() if observed_on else None
+                user_name = obs.get('user', {}).get('name') or obs.get('user', {}).get('login') or "Inconnu"
+                
                 obs_url = obs.get('uri')
                 
                 tags = obs.get('tags', []) 
@@ -663,10 +664,11 @@ if st.session_state.show_selection and st.session_state.search_results:
                 place_guess = obs.get('place_guess', '')
                 description = obs.get('description', '')
                 
-                # FIX: Robust Location Parsing
+                # Coordinates
+                lat = None
+                lon = None
                 coords = obs.get('location')
-                lat, lon = None, None
-                if coords and ',' in coords:
+                if coords:
                     try:
                         parts = coords.split(',')
                         lat = float(parts[0])
@@ -693,31 +695,42 @@ if st.session_state.show_selection and st.session_state.search_results:
                 props = {}
                 props["Titre"] = {"title": [{"text": {"content": sci_name}}]}
                 if date_iso: props["Date"] = {"date": {"start": date_iso}}
-                if user_name: props["Mycologue"] = {"rich_text": [{"text": {"content": user_name}}]}
-                if obs_url: props["URL iNat"] = {"url": obs_url}
+                # FIX: User requested Real Name ("Mathias...") and Select property
+                if user_name: props["Mycologue"] = {"select": {"name": user_name}}
+                # FIX: Renamed property as per user screenshot
+                if obs_url: props["URL Inaturalist"] = {"url": obs_url}
                 if first_photo_url: props["Photo Inat"] = {"url": first_photo_url}
                 if tag_string: props["No° Fongarium"] = {"rich_text": [{"text": {"content": tag_string}}]}
                 if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
                 if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
                 if lat: props["latitude (sexadécimal)"] = {"number": lat}
                 if lon: props["longitude (sexadécimal)"] = {"number": lon}
-
+                
+                obs_country = obs.get('place_guess', '') # iNat doesn't cleanly give country in basic response always, strictly place_guess used above
+                # But user listed "Place_country_name". 
+                # Let's see if we have it? Usually not in standard obs dict unless extra param. 
+                # Fallback: Don't map it if missing or map place_guess.
+                # Actually, earlier I didn't verify if I have place_country_name.
+                # Checking mapping table: "Place_country_name" -> "Place_country_name"
+                # If I don't have it, I skip it. 
+                
                 # SEND TO NOTION
                 try:
-                    # Debug Info
-                    # st.sidebar.caption(f"API Version: {notion.options.get('notion_version', 'Default')}")
+                    # Debug Info: printing version to confirm we are complying
+                    # st.write(f"DEBUG: Notion Version = {notion.options['notion_version']}")
                     
                     notion.pages.create(
-                        parent={"type": "database_id", "database_id": DATABASE_ID},
+                        parent={"database_id": DATABASE_ID},
                         properties=props,
                         children=children,
                         cover={"external": {"url": cover_url}} if cover_url else None
                     )
                 except Exception as e:
-                    st.warning(f"Erreur Notion sur {sci_name}: {e}")
+                    current_version = notion.options.get('notion_version', 'Unknown')
+                    st.warning(f"Erreur Notion sur {sci_name}: {e} (API Version: {current_version})")
                     # Provide hint on common error
                     if "multiple data sources" in str(e):
-                        st.caption("ℹ️ Note: Notion bloque l'écriture si la base de données est synchronisée ou contient des sources multiples (ex: Jira, GitHub sync). Vérifiez que l'ID cible une base simple.")
+                        st.caption("ℹ️ Note: Cette erreur indique souvent que la base de données cible est complexe (Synchronisée, Vue liée, ou Data Source). Assurez-vous de cibler la base originale et que l'API supporte ce type.")
                 
                 progress_bar.progress((i + 1) / len(obs_to_import))
             
