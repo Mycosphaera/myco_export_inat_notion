@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_autocomplete
+from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_autocomplete, get_users
 from notion_client import Client
 from datetime import date
 
@@ -20,6 +20,8 @@ if 'custom_dates' not in st.session_state:
     st.session_state.custom_dates = []
 if 'selection_states' not in st.session_state:
     st.session_state.selection_states = {} # Map ID -> bool
+if 'selected_users' not in st.session_state:
+    st.session_state.selected_users = [] # List of verified usernames
 
 # --- SECRETS MANAGEMENT ---
 try:
@@ -55,9 +57,75 @@ with tab1:
 
     with col_filters_1:
         st.markdown("**👤 Personne & Projet**")
-        user_input = st.text_input("Utilisateur(s)", value=default_user, help="Séparez par des virgules")
+        # User Selection with Validation
+        c_usr_input, c_usr_add = st.columns([3, 1])
+        new_user = c_usr_input.text_input("Ajouter un utilisateur", placeholder="Nom d'utilisateur", label_visibility="collapsed")
         
-        # --- TAXON SEARCH ENGINE ---
+        if c_usr_add.button("➕", help="Ajouter l'utilisateur"):
+            if new_user:
+                try:
+                    # Validate against API
+                    u_results = get_users(q=new_user, per_page=5)
+                    # Check exact match or close enough (API fuzzy searches)
+                    # We want to be sure it exists.
+                    valid_user = None
+                    if u_results['results']:
+                        # Check strict case-insensitive match for safety, or allow user to pick?
+                        # User wants explicitly "false name -> error".
+                        matches = [u['login'] for u in u_results['results'] if u['login'].lower() == new_user.lower()]
+                        if matches:
+                            valid_user = matches[0]
+                        else:
+                            # Maybe they meant the first result?
+                            # Strict is safer for "false name" check.
+                            pass
+                    
+                    if valid_user:
+                        if valid_user not in st.session_state.selected_users:
+                            st.session_state.selected_users.append(valid_user)
+                            st.success(f"Ajouté : {valid_user}")
+                            st.rerun()
+                        else:
+                            st.warning("Déjà ajouté.")
+                    else:
+                        st.error(f"Utilisateur '{new_user}' introuvable sur iNaturalist.")
+                except Exception as e:
+                    st.error(f"Erreur API: {e}")
+
+        # Display Selected Users
+        if st.session_state.selected_users:
+            st.caption("Utilisateurs sélectionnés (Cliquez pour retirer) :")
+            # Use multi-select pills to show/remove
+            # If user unselects, we remove from state.
+            current_selection = st.pills(
+                "Users",
+                options=st.session_state.selected_users,
+                default=st.session_state.selected_users,
+                selection_mode="multi",
+                label_visibility="collapsed",
+                key="user_pills"
+            )
+            
+            # Detect removal
+            if len(current_selection) < len(st.session_state.selected_users):
+                st.session_state.selected_users = current_selection
+                st.rerun()
+        else:
+            # Default fallback if empty? User requested selection.
+            # If empty, maybe use default_user if provided? 
+            # Logic below uses selected_users if present, else default?
+            # Let's keep it clean: params will use this list. 
+            # If list empty, maybe params['user_id'] is empty (all users)? Or default?
+            if default_user and not st.session_state.selected_users:
+                 # Pre-populate default if nothing selected yet?
+                 # Risky if they want "All". 
+                 # Let's just show "Aucun utilisateur filtré (Tout le monde)"
+                 st.info("Aucun filtre utilisateur (Tout le monde)")
+
+        # Compatibility with downstream logic
+        # function will join st.session_state.selected_users
+        
+         # --- TAXON SEARCH ENGINE ---
         taxon_query = st.text_input("Chercher un taxon (ex: Fungi)", placeholder="ex: Fungi")
         taxon_id = "47169" # Default to Fungi
         
@@ -139,8 +207,33 @@ with tab1:
     c_search, c_limit = st.columns([3, 1])
     limit_option = c_limit.selectbox("Nombre de résultats", [50, 100, 200, 500, "Tout (Attention !)"], index=0)
     
+    if st.button("🔄 Réinitialiser la recherche", type="secondary"):
+        st.session_state.search_results = []
+        st.session_state.custom_dates = []
+        st.session_state.selected_users = []
+        st.session_state.selection_states = {}
+        st.rerun()
+
     if c_search.button("🔎 Lancer la recherche", type="primary", use_container_width=True):
-        user_list = [u.strip() for u in user_input.split(',') if u.strip()]
+        # Use verified list OR default if empty? 
+        # Actually user might want "default_user" to start with.
+        # Let's add default_user to selected_users on init if list is empty?
+        # For now, explicit list.
+        user_list = st.session_state.selected_users
+        if not user_list and default_user:
+             # Fallback to text input default if they didn't touch the new widget? 
+             # No, confusing. Let's trust the widget.
+             # If widget empty -> All users?
+             # User prompt implies "verify name".
+             # If I type mycosphaera in default, I expect it used.
+             # I should probably auto-add default_user to list on startup.
+             pass
+        
+        # Pre-pulate
+        if not st.session_state.selected_users and default_user:
+            user_list = [default_user]
+
+        # Determine Limit
         
         # Determine Limit
         fetch_limit = 50
@@ -161,9 +254,11 @@ with tab1:
         run_search = True
 
 with tab2:
-    ids_input = st.text_area("IDs (séparés par virgules)")
+    ids_input = st.text_area("IDs (séparés par virgules ou sauts de ligne)")
     if st.button("🔎 Rechercher IDs", type="primary"):
-        id_list = [x.strip() for x in ids_input.split(',') if x.strip().isdigit()]
+        # Replace newlines with commas, then split
+        normalized_input = ids_input.replace('\n', ',')
+        id_list = [x.strip() for x in normalized_input.split(',') if x.strip().isdigit()]
         if id_list:
             params = {"id": id_list}
             run_search = True
