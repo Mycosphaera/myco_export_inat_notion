@@ -696,14 +696,17 @@ if st.session_state.search_results:
                         
                         
                         try:
-                            api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-                            # DEBUG: Verify the URL and ID
-                            # st.write(f"DEBUG: api_url='{api_url}'")
-                            # st.write(f"DEBUG: DATABASE_ID='{DATABASE_ID}'")
+                            # 1. Format Database ID to UUID if it's raw 32 chars
+                            # This is safer for the API
+                            formatted_db_id = DATABASE_ID
+                            if len(DATABASE_ID) == 32 and "-" not in DATABASE_ID:
+                                formatted_db_id = f"{DATABASE_ID[:8]}-{DATABASE_ID[8:12]}-{DATABASE_ID[12:16]}-{DATABASE_ID[16:20]}-{DATABASE_ID[20:]}"
+                            
+                            api_url = f"https://api.notion.com/v1/databases/{formatted_db_id}/query"
                             
                             headers = {
                                 "Authorization": f"Bearer {NOTION_TOKEN}",
-                                "Notion-Version": "2025-09-03",
+                                "Notion-Version": "2022-06-28", # Revert to STABLE version (2025 version doesn't exist publicly)
                                 "Content-Type": "application/json"
                             }
                             resp = requests.post(api_url, headers=headers, json={"filter": query_filter})
