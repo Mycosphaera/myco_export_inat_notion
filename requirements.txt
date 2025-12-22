@@ -1,0 +1,4 @@
+streamlit
+pandas
+notion-client>=2.0.0
+pyinaturalist
