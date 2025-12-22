@@ -704,14 +704,20 @@ if st.session_state.show_selection and st.session_state.search_results:
 
                 # SEND TO NOTION
                 try:
+                    # Debug Info
+                    # st.sidebar.caption(f"API Version: {notion.options.get('notion_version', 'Default')}")
+                    
                     notion.pages.create(
-                        parent={"database_id": DATABASE_ID},
+                        parent={"type": "database_id", "database_id": DATABASE_ID},
                         properties=props,
                         children=children,
                         cover={"external": {"url": cover_url}} if cover_url else None
                     )
                 except Exception as e:
                     st.warning(f"Erreur Notion sur {sci_name}: {e}")
+                    # Provide hint on common error
+                    if "multiple data sources" in str(e):
+                        st.caption("ℹ️ Note: Notion bloque l'écriture si la base de données est synchronisée ou contient des sources multiples (ex: Jira, GitHub sync). Vérifiez que l'ID cible une base simple.")
                 
                 progress_bar.progress((i + 1) / len(obs_to_import))
             
