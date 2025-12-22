@@ -171,8 +171,29 @@ with tab1:
             st.info("Laissez vide pour le monde entier.")
 
     with col_filters_3:
+        # Quick Date Presets
         st.markdown("**📅 Date d'observation**")
-        date_mode = st.radio("Type de date", ["Période", "Date exacte", "Multi-dates", "Tout"], index=0)
+        c_q1, c_q2, c_q3 = st.columns(3)
+        today = date.today()
+        
+        if c_q1.button("Auj.", type="secondary", use_container_width=True, help="Aujourd'hui"):
+            st.session_state.d_start = today
+            st.session_state.d_end = today
+            st.rerun()
+            
+        if c_q2.button("Sem.", type="secondary", use_container_width=True, help="Cette semaine (Lundi-Dimanche)"):
+            start_week = today - timedelta(days=today.weekday())
+            st.session_state.d_start = start_week
+            st.session_state.d_end = today
+            st.rerun()
+            
+        if c_q3.button("Mois", type="secondary", use_container_width=True, help="Ce mois-ci"):
+            start_month = today.replace(day=1)
+            st.session_state.d_start = start_month
+            st.session_state.d_end = today
+            st.rerun()
+
+        date_mode = st.radio("Type de date", ["Période", "Date exacte", "Multi-dates", "Tout"], index=0, key="date_mode_radio")
         
         d1, d2 = None, None
         
@@ -182,8 +203,9 @@ with tab1:
             
         elif date_mode == "Période":
             c_start, c_end = st.columns(2)
-            d1 = c_start.date_input("Du", value=date(2024, 1, 1))
-            d2 = c_end.date_input("Au", value=date.today())
+            # Use keys to allow button updates
+            d1 = c_start.date_input("Du", value=date(2024, 1, 1), key="d_start")
+            d2 = c_end.date_input("Au", value=today, key="d_end")
             
         elif date_mode == "Multi-dates":
             c_add, c_btn = st.columns([2, 1])
@@ -496,7 +518,7 @@ if st.session_state.show_selection and st.session_state.search_results:
     # Configure Columns
     column_config = {
         "Import": st.column_config.CheckboxColumn("Sélectionner"),
-        "ID": st.column_config.NumberColumn("ID iNat"),
+        "ID": st.column_config.TextColumn("ID iNat"), # Text to force no formatting
         "Taxon": st.column_config.TextColumn("Espèce"),
         "Date": st.column_config.TextColumn("Date"),
         "Lieu": st.column_config.TextColumn("Lieu"),
@@ -504,6 +526,8 @@ if st.session_state.show_selection and st.session_state.search_results:
         "Tags": st.column_config.TextColumn("No° Fongarium (Tags)"),
         "Description": st.column_config.TextColumn("Description"),
         "GPS": st.column_config.TextColumn("GPS"),
+        "URL iNat": st.column_config.LinkColumn("Lien iNat"),
+        "Photo URL": st.column_config.LinkColumn("Lien Photo"),
         "Image": st.column_config.ImageColumn("Aperçu"),
         "_original_obs": None 
     }
