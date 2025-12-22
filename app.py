@@ -314,6 +314,7 @@ with tab2:
         id_list = [x.strip() for x in normalized_input.split(',') if x.strip().isdigit()]
         if id_list:
             params = {"id": id_list}
+            fetch_limit = len(id_list) # Use list length as limit
             run_search = True
 
 # --- SEARCH EXECUTION ---
