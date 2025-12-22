@@ -5,6 +5,9 @@ from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_au
 from notion_client import Client
 from datetime import date, timedelta
 
+# --- PAGE CONFIGURATION ---
+st.set_page_config(page_title="Importateur Myco-Notion", page_icon="🍄", layout="wide")
+
 # --- HELPER FUNCTIONS ---
 @st.dialog("🍄 Détails de l'observation")
 def show_details(obs_data):
@@ -26,8 +29,6 @@ def show_details(obs_data):
         st.caption("Description:")
         st.write(obs_data['Description'])
 
-# --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Importateur Myco-Notion", page_icon="🍄", layout="wide")
 st.title("🍄 Importateur iNaturalist → Notion")
 st.caption("Configuration: Filtres naturels & Recherche de lieux")
 
@@ -67,7 +68,8 @@ with st.sidebar:
 
 # --- NOTION CLIENT ---
 if NOTION_TOKEN:
-    notion = Client(auth=NOTION_TOKEN, notion_version="2025-09-03")
+    # Use stable version 2022-06-28 instead of experimental 2025 date
+    notion = Client(auth=NOTION_TOKEN, notion_version="2022-06-28")
 
 # --- INTERFACE ---
 tab1, tab2 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs"])
@@ -140,7 +142,8 @@ with tab1:
             # Detect removal
             if len(current_selection) < len(st.session_state.selected_users):
                 st.session_state.selected_users = current_selection
-                st.rerun()
+                # st.rerun() removed to avoid "Bad message format" in Streamlit 1.40+
+                pass
         else:
             # Default fallback if empty? User requested selection.
             # If empty, maybe use default_user if provided? 
@@ -250,7 +253,8 @@ with tab1:
                     c_date.code(d.strftime("%Y-%m-%d"))
                     if c_del.button("❌", key=f"del_{i}", help="Supprimer cette date"):
                         st.session_state.custom_dates.pop(i)
-                        st.rerun()
+                        # No rerun needed, button already triggers it
+                        pass
                 
                 if st.button("🗑️ Effacer tout", type="secondary"):
                     st.session_state.custom_dates = []
@@ -482,12 +486,14 @@ if st.session_state.show_selection and st.session_state.search_results:
     if c_sel1.button("✅ Tout sélectionner (Vue)"):
         for o in visible_obs:
             st.session_state.selection_states[o['id']] = True
-        st.rerun()
+        # st.rerun() removed - redundant as button click already triggers rerun
+        pass
             
     if c_sel2.button("❌ Tout désélectionner (Vue)"):
         for o in visible_obs:
             st.session_state.selection_states[o['id']] = False
-        st.rerun()
+        # st.rerun() removed - redundant as button click already triggers rerun
+        pass
         
     # Transform to DataFrame for Data Editor
     raw_data = []
@@ -626,6 +632,15 @@ if st.session_state.show_selection and st.session_state.search_results:
         msg = st.session_state.dup_msg
         if msg["type"] == "warning":
             st.warning(msg["text"])
+            # Provide option to uncheck them
+            if "found_duplicates_list" in st.session_state and st.session_state.found_duplicates_list:
+                if st.button("🚫 Décocher tous les doublons identifiés", type="primary", use_container_width=True):
+                    for d_id in st.session_state.found_duplicates_list:
+                        st.session_state.selection_states[int(d_id)] = False
+                    st.session_state.found_duplicates_list = []
+                    st.session_state.dup_msg = {"type": "success", "text": "✅ Doublons décochés !"}
+                    st.session_state.editor_key_version += 1
+                    st.rerun()
         elif msg["type"] == "success":
             st.success(msg["text"])
             
@@ -679,21 +694,21 @@ if st.session_state.show_selection and st.session_state.search_results:
                     
                     # Set Message and Rerun
                     if found_duplicates:
-                        # Increment version to force data_editor to reload from session_state
-                        st.session_state.editor_key_version += 1
+                        # Store in state but DON'T uncheck yet (User wants the option)
+                        st.session_state.found_duplicates_list = found_duplicates
                         
                         st.session_state.dup_msg = {
                             "type": "warning", 
-                            "text": f"⚠️ {len(found_duplicates)} doublons trouvés et décochés de la liste : {', '.join(found_duplicates)}"
+                            "text": f"⚠️ {len(found_duplicates)} doublons trouvés dans Notion."
                         }
                         st.rerun()
                     else:
+                        st.session_state.found_duplicates_list = []
                         st.session_state.dup_msg = {
                             "type": "success", 
                             "text": "✅ Aucun doublon trouvé ! Notion ne connait pas encore ces observations."
                         }
-                        st.rerun() # Rerun to ensure message persists cleanly or just show it? 
-                        # Rerun is safer to clear previous states if any.
+                        st.rerun()
 
     if st.button("📤 Importer vers Notion", type="primary"):
         # Robust Import Logic using STATE
