@@ -708,8 +708,8 @@ if st.session_state.show_selection and st.session_state.search_results:
                 if tag_string: props["No° Fongarium"] = {"rich_text": [{"text": {"content": tag_string}}]}
                 if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
                 if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
-                if lat: props["Latitude (sexadécimal)"] = {"number": lat}
-                if lon: props["Longitude (sexadécimal)"] = {"number": lon}
+                if lat: props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lat)}}]}
+                if lon: props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lon)}}]}
                 
                 obs_country = obs.get('place_guess', '') # iNat doesn't cleanly give country in basic response always, strictly place_guess used above
                 # But user listed "Place_country_name". 
