@@ -118,12 +118,16 @@ with tab1:
             if st.session_state.custom_dates:
                 st.caption("Dates sélectionnées :")
                 # Display simply
-                cols = st.columns(min(len(st.session_state.custom_dates), 4) or 1)
                 for i, d in enumerate(st.session_state.custom_dates):
-                    st.code(d.strftime("%Y-%m-%d"))
+                    c_date, c_del = st.columns([4, 1])
+                    c_date.code(d.strftime("%Y-%m-%d"))
+                    if c_del.button("❌", key=f"del_{i}", help="Supprimer cette date"):
+                        st.session_state.custom_dates.pop(i)
+                        st.rerun()
                 
                 if st.button("🗑️ Effacer tout", type="secondary"):
                     st.session_state.custom_dates = []
+                    st.rerun()
             else:
                 st.info("Aucune date ajoutée.")
 
