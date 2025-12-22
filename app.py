@@ -66,6 +66,20 @@ with st.sidebar:
         DATABASE_ID = st.text_input("ID Database")
     
     default_user = st.text_input("Utilisateur par défaut", value="mycosphaera")
+    
+    # Sanitize DATABASE_ID just in case user pasted a full URL
+    if DATABASE_ID and "notion.so" in DATABASE_ID:
+        # Extract ID part (either after last / or before ?)
+        try:
+             # Typical format: https://www.notion.so/{workspace_name}/{database_id}?v={view_id}
+             # or https://www.notion.so/{database_id}?v={view_id}
+             path_part = DATABASE_ID.split("?")[0]
+             DATABASE_ID = path_part.split("/")[-1]
+             # If exact ID is 32 chars +-, handled. If it has - it is also fine.
+        except:
+             pass 
+    if DATABASE_ID:
+        DATABASE_ID = DATABASE_ID.strip()
 
 # --- NOTION CLIENT ---
 if NOTION_TOKEN:
