@@ -613,69 +613,76 @@ if st.session_state.show_selection and st.session_state.search_results:
     st.info(f"{total_checked} observations sélectionnées pour l'import.")
     
     # --- DUPLICATE CHECKER ---
+    # Display persistent message if exists
+    if "dup_msg" in st.session_state and st.session_state.dup_msg:
+        msg = st.session_state.dup_msg
+        if msg["type"] == "warning":
+            st.warning(msg["text"])
+        elif msg["type"] == "success":
+            st.success(msg["text"])
+            
     if total_checked > 0 and NOTION_TOKEN and DATABASE_ID:
         col_dup, col_imp = st.columns([1, 1])
         if col_dup.button("🕵️ Vérifier doublons Notion", type="secondary"):
+            # Clear previous message
+            st.session_state.dup_msg = None
+            
             with st.spinner("Vérification des doublons dans Notion..."):
                 # Get IDs from STATE
                 ids_to_check = [str(oid) for oid, is_sel in st.session_state.selection_states.items() if is_sel and oid in current_ids]
                 
-                dup_count = 0
-                processed = 0
-                found_duplicates = []
-                
-                # Optimized: Filter by OR 
-                chunk_size = 20
-                for i in range(0, len(ids_to_check), chunk_size):
-                    chunk = ids_to_check[i:i + chunk_size]
+                if not ids_to_check:
+                    st.warning("Aucune observation valide sélectionnée.")
+                else: 
+                    found_duplicates = []
                     
-                    # Build OR filter
-                    or_filters = []
-                    for cid in chunk:
-                       or_filters.append({
-                           "property": "URL Inaturalist",
-                           "url": {
-                               "contains": cid
-                           }
-                       })
-                    
-                    query_filter = {"or": or_filters}
-                    
-                    try:
-                        # Use standard requests
-                        api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-                        headers = {
-                            "Authorization": f"Bearer {NOTION_TOKEN}",
-                            "Notion-Version": "2022-06-28",
-                            "Content-Type": "application/json"
-                        }
+                    # Chunked Check
+                    chunk_size = 20
+                    for i in range(0, len(ids_to_check), chunk_size):
+                        chunk = ids_to_check[i:i + chunk_size]
                         
-                        resp = requests.post(api_url, headers=headers, json={"filter": query_filter})
+                        or_filters = [{"property": "URL Inaturalist", "url": {"contains": cid}} for cid in chunk]
+                        query_filter = {"or": or_filters}
                         
-                        if resp.status_code != 200:
-                            raise Exception(f"HTTP {resp.status_code}: {resp.text}")
+                        try:
+                            api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+                            headers = {
+                                "Authorization": f"Bearer {NOTION_TOKEN}",
+                                "Notion-Version": "2022-06-28",
+                                "Content-Type": "application/json"
+                            }
                             
-                        q_data = resp.json()
-                        
-                        # Process results
-                        for page in q_data.get('results', []):
-                             props = page.get('properties', {})
-                             url_prop = props.get('URL Inaturalist', {}).get('url', '')
-                             if url_prop:
-                                 for cid in chunk:
-                                     if cid in url_prop:
-                                         found_duplicates.append(cid)
-                                         # Uncheck in session state
-                                         st.session_state.selection_states[int(cid)] = False
+                            resp = requests.post(api_url, headers=headers, json={"filter": query_filter})
+                            if resp.status_code != 200:
+                                st.error(f"Erreur API ({resp.status_code}): {resp.text}")
+                                break
+                                
+                            q_data = resp.json()
+                            for page in q_data.get('results', []):
+                                 props = page.get('properties', {})
+                                 url_prop = props.get('URL Inaturalist', {}).get('url', '')
+                                 if url_prop:
+                                     for cid in chunk:
+                                         if cid in url_prop:
+                                             found_duplicates.append(cid)
+                                             st.session_state.selection_states[int(cid)] = False
+                        except Exception as e:
+                            st.error(f"Exception: {e}")
                     
-                    except Exception as e:
-                        st.error(f"Erreur lors de la vérification Notion: {e}")
-                
-                if found_duplicates:
-                    st.warning(f"⚠️ {len(found_duplicates)} doublons trouvés et décochés automatiquement : {', '.join(found_duplicates)}")
-                    st.rerun()
-                else:
-                    st.success("✅ Aucun doublon trouvé parmi la sélection !")
+                    # Set Message and Rerun
+                    if found_duplicates:
+                        st.session_state.dup_msg = {
+                            "type": "warning", 
+                            "text": f"⚠️ {len(found_duplicates)} doublons trouvés et décochés de la liste : {', '.join(found_duplicates)}"
+                        }
+                        st.rerun()
+                    else:
+                        st.session_state.dup_msg = {
+                            "type": "success", 
+                            "text": "✅ Aucun doublon trouvé ! Notion ne connait pas encore ces observations."
+                        }
+                        st.rerun() # Rerun to ensure message persists cleanly or just show it? 
+                        # Rerun is safer to clear previous states if any.
 
     if st.button("📤 Importer vers Notion", type="primary"):
         # Robust Import Logic using STATE
