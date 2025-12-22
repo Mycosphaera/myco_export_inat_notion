@@ -700,6 +700,9 @@ if st.session_state.search_results:
                         chunk_size = 20
                         # st.info(f"Recherche dans les colonnes : {[p['name'] for p in searchable_props]}") # Debug info
                         
+                        # Debug container
+                        debug_details = []
+                        
                         for i in range(0, len(ids_to_check), chunk_size):
                             chunk = ids_to_check[i:i + chunk_size]
                             
@@ -709,18 +712,27 @@ if st.session_state.search_results:
                                 p_type = prop['type']
                                 
                                 for cid in chunk:
+                                    cid = str(cid).strip()
+                                    full_url = f"https://www.inaturalist.org/observations/{cid}"
+                                    
+                                    # Strategy 1: Contains ID (Broad)
                                     if p_type == "url":
                                         or_filters.append({"property": p_name, "url": {"contains": cid}})
+                                        # Strategy 2: Exact Full URL (Precise - User Configured)
+                                        or_filters.append({"property": p_name, "url": {"equals": full_url}})
                                     elif p_type == "number":
                                         if cid.isdigit():
                                             or_filters.append({"property": p_name, "number": {"equals": int(cid)}})
                                     elif p_type in ["rich_text", "title"]:
-                                        or_filters.append({"property": p_name, p_type: {"contains": cid}}) # Use contains for text to catch ID inside URL string
+                                        or_filters.append({"property": p_name, p_type: {"contains": cid}})
+                                        # Also match full URL in text just in case
+                                        or_filters.append({"property": p_name, p_type: {"equals": full_url}})
                             
                             if not or_filters:
                                  break
                                  
                             query_filter = {"or": or_filters}
+                            debug_details.append(f"Query Batch {i//chunk_size}: checking {len(chunk)} IDs against {len(searchable_props)} columns.")
                             
                             try:
                                 api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
@@ -731,11 +743,6 @@ if st.session_state.search_results:
                                     for page in q_data.get('results', []):
                                         page_props = page.get('properties', {})
                                         
-                                        # Verification Phase: Check ALL columns (even formulas if we fetched the page)
-                                        # But here we just check if any of our searchable props matched OR if a formula prop matches the ID
-                                        
-                                        # To be safe, we check if the ID exists in ANY property of the returned page
-                                        match_found = False
                                         # Flatten properties to string values
                                         all_values = []
                                         for p_key, p_val in page_props.items():
@@ -748,7 +755,6 @@ if st.session_state.search_results:
                                                 raw = p_val.get(pt, [])
                                                 v = raw[0].get('plain_text', '') if raw else ''
                                             elif pt == 'formula':
-                                                # Formula result
                                                 f_res = p_val.get('formula', {})
                                                 f_type = f_res.get('type')
                                                 if f_type == 'string': v = f_res.get('string', '')
@@ -756,10 +762,13 @@ if st.session_state.search_results:
                                             
                                             if v: all_values.append(str(v))
                                         
+                                        # Verification
                                         for cid in chunk:
-                                            # Robust check: Exact match or contained in URL
+                                            cid = str(cid).strip()
+                                            full_url = f"https://www.inaturalist.org/observations/{cid}"
+                                            
                                             for val in all_values:
-                                                if val and (cid == val or cid in val):
+                                                if val and (cid in val or full_url == val):
                                                     found_duplicates.append(cid)
                                                     
                                 else:
@@ -767,7 +776,7 @@ if st.session_state.search_results:
                             except Exception as e:
                                 st.error(f"Erreur requête : {e}")
                     
-                    # Remove duplicates
+                    # Remove duplicates from list to avoid repeating same ID
                     found_duplicates = list(set(found_duplicates))
                     
                     if found_duplicates:
@@ -775,7 +784,17 @@ if st.session_state.search_results:
                         st.session_state.dup_msg = {"type": "warning", "text": f"⚠️ {len(found_duplicates)} doublons trouvés."}
                     else:
                         st.session_state.found_duplicates_list = []
-                        st.session_state.dup_msg = {"type": "success", "text": "✅ 0 doublon trouvé."}
+                        st.session_state.dup_msg = {"type": "success", "text": "✅ 0 doublon."}
+                        
+                        # Show Debug info only if failed and requested or implicit? 
+                        # Let's show expandable debug info always for transparency if users are confused
+                        with st.expander("ℹ️ Détails du diagnostic Notion"):
+                            st.write("Colonnes scannées :", [p['name'] + ' (' + p['type'] + ')' for p in searchable_props])
+                            st.write("Logs :", debug_details)
+                            if ids_to_check:
+                                st.write("Exemple ID cherché :", ids_to_check[0])
+                                st.write("Exemple URL complète :", f"https://www.inaturalist.org/observations/{ids_to_check[0]}")
+                    
                     st.rerun()
 
     if st.button("📤 Importer vers Notion", type="primary"):
