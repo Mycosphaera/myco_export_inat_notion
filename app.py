@@ -395,13 +395,16 @@ if st.session_state.show_selection and st.session_state.search_results:
     }
     
     # Show Editor
+    # Generate unique key string from sorted selected dates
+    filter_key_suffix = "_all" if not filter_dates else "_" + "_".join(sorted(filter_dates))
+    
     edited_df = st.data_editor(
         df,
         column_config=column_config,
         hide_index=True,
         use_container_width=True,
         disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "Description", "GPS", "Image"],
-        key=f"editor_{filter_date}" # Unique key to reset state on filter change
+        key=f"editor{filter_key_suffix}" # Unique key to reset state on filter change
     )
     
     # SYNC BACK TO STATE
