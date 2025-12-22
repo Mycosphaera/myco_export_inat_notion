@@ -336,51 +336,58 @@ with tab2:
 if run_search:
     with st.spinner("Recherche sur iNaturalist..."):
         try:
-            results = []
+            collected = []
+            total_available = 0
             
-            # Helper to fetch pages
-            def fetch_with_pagination(api_params, max_count):
-                collected = []
-                page = 1
-                while len(collected) < max_count:
-                    # Adjust per_page if nearing limit
-                    remaining = max_count - len(collected)
-                    p_size = min(200, remaining) # Max 200 per call
-                    
-                    api_params['page'] = page
-                    api_params['per_page'] = p_size
-                    
-                    batch = get_observations(**api_params)['results']
-                    if not batch:
-                        break
-                        
-                    collected.extend(batch)
-                    if len(batch) < p_size: # End of results
-                        break
-                    
-                    page += 1
-                return collected
-
-            # MULTI-DATE LOGIC
             if date_mode == "Multi-dates" and st.session_state.custom_dates:
-                for d in st.session_state.custom_dates:
+                 # Logic for multi-date (complex total)
+                 # We sum up totals? Or just show what we have.
+                 for d in st.session_state.custom_dates:
                     p = params.copy()
-                    p['on'] = d # Specific API parameter for single date
-                    # Remove d1/d2 if present to avoid conflict
-                    p.pop('d1', None) 
-                    p.pop('d2', None)
+                    p['on'] = d 
+                    p.pop('d1', None); p.pop('d2', None)
                     
-                    # Fetch for this date (respecting global limit per date? or split limit? 
-                    # Let's apply fetch_limit per date to avoid complexity, or just 200 per date)
-                    # User likely expects "Tout" to include all dates fully.
-                    # Simplification: Apply fetch_limit TO TOTAL is hard with loop.
-                    # Let's fetch "Tout" for each date if requested.
+                    # Fetch batch
+                    p['page'] = 1
+                    p['per_page'] = min(200, fetch_limit)
+                    resp = get_observations(**p)
+                    total_available += resp.get('total_results', 0)
                     
-                    batch = fetch_with_pagination(p, fetch_limit)
-                    results.extend(batch)
+                    # Pagination logic (simplified for multi-date: just grab up to limit per date?)
+                    # User asked for "Absolute result". 
+                    # If I sum total_results of all dates, that is correct.
+                    # Start with first batch
+                    batch = resp['results']
+                    collected.extend(batch)
+                    
+                    # Add more pages if needed? (Skipping for brevity/speed unless requested)
+                    # If fetch_limit > 200, we might need loop.
+                    while len(batch) == 200 and len(collected) < fetch_limit:
+                        p['page'] += 1
+                        batch = get_observations(**p)['results']
+                        collected.extend(batch)
+                        if not batch: break
             else:
-                # Standard Search
-                results = fetch_with_pagination(params, fetch_limit)
+                 # Standard Search (Single flow)
+                 page = 1
+                 while len(collected) < fetch_limit:
+                     remaining = fetch_limit - len(collected)
+                     p_size = min(200, remaining)
+                     params['page'] = page
+                     params['per_page'] = p_size
+                     
+                     resp = get_observations(**params)
+                     if page == 1:
+                         total_available = resp.get('total_results', 0)
+                         
+                     batch = resp['results']
+                     if not batch: break
+                     
+                     collected.extend(batch)
+                     if len(batch) < p_size: break
+                     page += 1
+            
+            results = collected
             
             # Remove potential duplicates based on ID
             seen_ids = set()
@@ -400,6 +407,9 @@ if run_search:
             # Init selection state: Default All True
             st.session_state.selection_states = {r['id']: True for r in unique_results}
             
+            st.session_state.total_results_count = total_available # NEW: Store total
+            st.session_state.editor_key_version += 1 # Force reset
+            
             st.session_state.show_selection = True
             if not unique_results:
                 st.warning("Aucune observation trouvée.")
@@ -408,7 +418,7 @@ if run_search:
             st.session_state.search_results = []
 
 # --- SELECTION INTERFACE ---
-if st.session_state.show_selection and st.session_state.search_results:
+if st.session_state.search_results:
     st.divider()
     
     # --- RESULT FILTERING ---
@@ -446,7 +456,8 @@ if st.session_state.show_selection and st.session_state.search_results:
     sorted_dates = sorted(list(all_dates), reverse=True)
     
     c_title, c_filter = st.columns([1, 2])
-    c_title.subheader(f"📋 Résultat : {len(st.session_state.search_results)} obs")
+    total_disp = st.session_state.get('total_results_count', len(st.session_state.search_results))
+    c_title.subheader(f"📋 Résultat : {len(st.session_state.search_results)} affichés / {total_disp} total")
     
     # Use st.pills for "Etiquettes" (requires Streamlit 1.40+)
     # Multi-select allowed. Empty = All.
@@ -547,7 +558,7 @@ if st.session_state.show_selection and st.session_state.search_results:
                 "URL iNat": f"https://www.inaturalist.org/observations/{obs['id']}",
                 "URL Photo": img_url,
                 "Image": img_url,
-                "_original_obs": obs 
+                # "_original_obs": obs 
             })
         st.session_state.cached_display_df = pd.DataFrame(raw_data)
         st.session_state.cached_display_ids = current_visible_ids
@@ -574,7 +585,7 @@ if st.session_state.show_selection and st.session_state.search_results:
         "URL iNat": st.column_config.LinkColumn("🌐 iNat", display_text=r"https://www\.inaturalist\.org/observations/(.*)", help="Ouvrir"),
         "URL Photo": st.column_config.LinkColumn("🖼️", help="Image"),
         "Image": st.column_config.ImageColumn("📷", help="Aperçu"),
-        "_original_obs": None 
+        # "_original_obs": None 
     }
     
     # Show Data Editor
@@ -596,7 +607,7 @@ if st.session_state.show_selection and st.session_state.search_results:
         column_config=column_config,
         hide_index=True,
         use_container_width=True,
-        disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "Description", "GPS", "URL iNat", "Photo URL", "Image", "_original_obs"],
+        disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "Description", "GPS", "URL iNat", "Photo URL", "Image"],
         key=editor_key
     )
     
