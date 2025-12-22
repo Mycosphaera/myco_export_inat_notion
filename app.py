@@ -497,14 +497,14 @@ if st.session_state.show_selection and st.session_state.search_results:
         
     # Transform to DataFrame for Data Editor
     # Optimize DataFrame Creation: Only rebuild if search results changed
-    # We use a hash or flag to detect change. Using len(search_results) + first ID as proxy or just session state flag.
-    # Actually, we just need to separate the static data from the dynamic selection state.
-    
     # 1. Build Static Data (if needed)
-    if 'cached_display_df' not in st.session_state or len(st.session_state.cached_display_df) != len(visible_obs) or (visible_obs and str(visible_obs[0]['id']) != str(st.session_state.cached_display_df.iloc[0]['ID'])):
+    # We use a tuple of IDs as a cheap "hash" for the visible dataset
+    current_visible_ids = tuple(o['id'] for o in visible_obs)
+    
+    if 'cached_display_ids' not in st.session_state or st.session_state.cached_display_ids != current_visible_ids:
         raw_data = []
         for obs in visible_obs:
-            # Safe extraction logic (Static)
+             # Safe extraction logic (Static)
             taxon_name = obs.get('taxon', {}).get('name') if obs.get('taxon') else "Inconnu"
             obs_date = obs.get('time_observed_at')
             date_str = obs_date.strftime("%Y-%m-%d") if obs_date else str(obs.get('observed_on_string', 'N/A'))
@@ -536,6 +536,7 @@ if st.session_state.show_selection and st.session_state.search_results:
                 "_original_obs": obs 
             })
         st.session_state.cached_display_df = pd.DataFrame(raw_data)
+        st.session_state.cached_display_ids = current_visible_ids
 
     # 2. Merge with Dynamic Selection State
     df = st.session_state.cached_display_df.copy()
@@ -564,11 +565,12 @@ if st.session_state.show_selection and st.session_state.search_results:
     
     # Show Data Editor
     # Key includes version to force reload only when strictly needed (external updates)
-    # Using a constant key for normal interactions prevents expected "fading"/remounting
     base_key = f"editor{filter_key_suffix}"
-    
-    # We remove the version from the key for normal user checks to allow optimistic UI (faster)
-    # We ONLY increment key if we programmatically changed selection (via duplicate button)
+    # Use version only if strictly necessary to clear stale internal state?
+    # Actually, if we use a static key, Streamlit might hold onto "Import" column state even if we change the DF content underlying it?
+    # No, if DF changes, editor should update. 
+    # The slowdown comes from full mount.
+    # We'll use the version key only for programmatic RESET.
     editor_key = f"{base_key}_v{st.session_state.editor_key_version}"
     
     response = st.data_editor(
@@ -582,14 +584,10 @@ if st.session_state.show_selection and st.session_state.search_results:
     
     # Logic: Detect Changes
     if response is not None and not response.empty:
-         # Optimize loop: iterate only if needed? DataEditor returns full df.
-         # Actually we can just zip interaction
-         # But safer to iterate rows
          for index, row in response.iterrows():
              try:
                  o_id = int(str(row['ID']).replace(",",""))
                  is_checked = row['Import']
-                 # Only update if changed to avoid unnecessary state writes
                  if st.session_state.selection_states.get(o_id) != is_checked:
                      st.session_state.selection_states[o_id] = is_checked
              except ValueError: pass
@@ -630,28 +628,19 @@ if st.session_state.show_selection and st.session_state.search_results:
                 chunk_size = 20
                 for i in range(0, len(ids_to_check), chunk_size):
                     chunk = ids_to_check[i:i + chunk_size]
-                    # Robust Query: Try checking two common property names AND the generic URL
-                    # or_filters = [
-                    #     {"property": "URL Inaturalist", "url": {"contains": cid}},
-                    #     {"property": "URL iNat", "url": {"contains": cid}} 
-                    # ] -> This might fail if property doesn't exist.
-                    # Safest: Search generic if possible? No.
-                    # We will try the user's mapped name first
                     
-                    # We'll use a single robust filter on the most likely property "URL Inaturalist"
-                    # But if that fails previously, maybe the user strictly uses "URL iNat"?
-                    # Let's construct a filter that checks for the ID in the URL property
-                    or_filters = [{"property": "URL Inaturalist", "url": {"contains": cid}} for cid in chunk]
-                    
-                    # FALLBACK: Also query for "URL iNat" just in case? 
-                    # No, mixing properties in OR might fail if one missing.
-                    # We stick to "URL Inaturalist" as defined in mapping.
-                    
+                    # Robust Query: Check multiple common URL property names using OR
+                    # We check 'URL Inaturalist' AND 'URL iNat'
+                    or_filters = []
+                    for cid in chunk:
+                         or_filters.append({"property": "URL Inaturalist", "url": {"contains": cid}})
+                         or_filters.append({"property": "URL iNat", "url": {"contains": cid}})
+                         
                     query_filter = {"or": or_filters}
                     
                     try:
                         api_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-                        headers = {"Authorization": f"Bearer {NOTION_TOKEN}", "Notion-Version": "2022-06-28", "Content-Type": "application/json"}
+                        headers = {"Authorization": f"Bearer {NOTION_TOKEN}", "Notion-Version": "2025-09-03", "Content-Type": "application/json"}
                         resp = requests.post(api_url, headers=headers, json={"filter": query_filter})
                         
                         if resp.status_code == 200:
@@ -659,13 +648,17 @@ if st.session_state.show_selection and st.session_state.search_results:
                             for page in q_data.get('results', []):
                                 props = page.get('properties', {})
                                 # Check BOTH possible keys in response to be safe
-                                url_obj = props.get('URL Inaturalist') or props.get('URL iNat')
+                                # Also check standard 'url' property if it exists?
+                                url_obj = props.get('URL Inaturalist') or props.get('URL iNat') or props.get('Lien iNat')
                                 url_val = url_obj.get('url', '') if url_obj else ''
                                 if url_val:
                                     for cid in chunk:
                                         if cid in url_val:
                                             found_duplicates.append(cid)
                     except Exception: pass # Fail silently on chunk errors
+                
+                # Remove duplicates from list to avoid repeating same ID
+                found_duplicates = list(set(found_duplicates))
                 
                 if found_duplicates:
                     st.session_state.found_duplicates_list = found_duplicates
