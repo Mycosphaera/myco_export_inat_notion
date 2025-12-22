@@ -291,11 +291,19 @@ with tab1:
              pass
         
         # Pre-pulate
-        if not st.session_state.selected_users and default_user:
-            user_list = [default_user]
+        if not st.session_state.selected_users:
+             if default_user:
+                 user_list = [default_user]
+             
+             # Fallback: If user typed in "Add User" but didn't click Plus, let's try to use it?
+             # BUT only if they didn't set a default_user or if they rely on text input.
+             # Actually, if new_user is present, it's a strong signal they want it.
+             if new_user and new_user not in user_list:
+                  # Use the typed user instead of (or with?) default? 
+                  # Usually "Add User" implies override. 
+                  # Let's add it to the search list.
+                  user_list = [new_user] 
 
-        # Determine Limit
-        
         # Determine Limit
         fetch_limit = 50
         if isinstance(limit_option, int):
@@ -309,8 +317,7 @@ with tab1:
             "d2": d2, 
             "taxon_id": taxon_id, 
             "place_id": selected_place_id,
-            "per_page": 200, # Request max allowed per page
-            "detail": "all"
+            "per_page": 200 # Request max allowed per page
         }
         run_search = True
 
