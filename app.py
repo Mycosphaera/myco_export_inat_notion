@@ -564,71 +564,55 @@ if st.session_state.show_selection and st.session_state.search_results:
     # Generate unique key string from sorted selected dates
     filter_key_suffix = "_all" if not filter_dates else "_" + "_".join(sorted(filter_dates))
     
-    # We use st.dataframe which supports robust selection
-    # Using selection_mode="multi-row" allows selecting observations to import
-    event = st.dataframe(
+    # Show Data Editor (Editable Checkboxes)
+    # Generate unique key string from sorted selected dates
+    filter_key_suffix = "_all" if not filter_dates else "_" + "_".join(sorted(filter_dates))
+    
+    # We use data_editor to allow checking the box
+    # We remove 'selection_mode' as it causes issues in some versions with data_editor
+    response = st.data_editor(
         df,
         column_config=column_config,
         hide_index=True,
         use_container_width=True,
-        key=f"df{filter_key_suffix}",
-        on_select="rerun",
-        selection_mode="multi-row"
+        disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "Description", "GPS", "URL iNat", "Photo URL", "Image", "_original_obs"],
+        key=f"editor{filter_key_suffix}",
+        on_select="rerun" 
     )
     
-    # 1. Handle Selection (Import State + Pop-up)
-    current_indices = event.selection['rows']
-    
-    # Update Import State based on selection
-    # Reset states for visible rows first? No, easier to rely on explicit selection.
-    # But filtering makes this tricky (invisible rows).
-    # Logic: 
-    # - If row is selected in UI, set stored state to True.
-    # - If row is visible but NOT selected, set stored state to False.
-    # - This ensures WYSIWYG.
-    
-    # Check identifying IDs for visible rows
-    visible_ids = [row['_original_obs']['id'] for _, row in df.iterrows()]
-    selected_subset_ids = []
-    
-    if current_indices:
-        for idx in current_indices:
-            if idx < len(df):
-                obs_row = df.iloc[idx]
-                o_id = obs_row['_original_obs']['id']
-                selected_subset_ids.append(o_id)
-                st.session_state.selection_states[o_id] = True
-                
-                # Check for Pop-up Trigger (Last Selected)
-                # We identify "new" selection by checking set difference or single click?
-                # Multi-row makes "last clicked" hard to guess from list.
-                # Heuristic: If 1 row selected, show it?
-                # Or if selection length changed by 1?
-                # Let's show details for the LAST item in the list (usually most recent click?)
-                # Use a specific logic: Only open if 1 item selected?
-                # User wants to browse.
-                # Let's open the last index.
-                if len(current_indices) == 1:
-                     # Only pop up if purely one item selected (avoids spam on bulk select)
-                     show_details(obs_row)
-    
-    # Mark unselected visible rows as False
-    for o_id in visible_ids:
-        if o_id not in selected_subset_ids:
-             st.session_state.selection_states[o_id] = False
+    # 1. Handle Selection (Pop-up)
+    # Using on_select with data_editor allows row clicks too
+    if response.selection and response.selection['rows']:
+        idx = response.selection['rows'][0]
+        if idx < len(df):
+            if idx != st.session_state.last_selected_index:
+                 st.session_state.last_selected_index = idx
+                 row_data = df.iloc[idx]
+                 show_details(row_data)
+    else:
+        st.session_state.last_selected_index = None
 
-    # Count total selected
-    total_selected = sum(st.session_state.selection_states.values())
-    
-    st.info(f"{total_selected} observations sélectionnées pour l'import.")
+    # 2. Count total checked (visual feedback)
+    # Access the edited data directly
+    edited_df = response.data
+    total_checked = int(edited_df['Import'].sum()) if not edited_df.empty else 0
+    st.info(f"{total_checked} observations sélectionnées pour l'import.")
     
     if st.button("📤 Importer vers Notion", type="primary"):
-        # Gather all IDs that are True in selection_states AND exist in search_results
-        # Need to re-fetch full objects for IDs that are selected
-        ids_to_import = [
-            obs for obs in st.session_state.search_results 
-            if st.session_state.selection_states.get(obs['id'], False)
-        ]
+        # Robust Import Logic: Read directly from the Edited Dataframe
+        if not edited_df.empty:
+            # Get IDs of rows where Import is True
+            # We cast to string to match robustly
+            checked_rows = edited_df[edited_df['Import'] == True]
+            checked_ids = set(checked_rows['ID'].astype(str))
+            
+            # Filter the source list (preserves full object data)
+            ids_to_import = [
+                obs for obs in st.session_state.search_results 
+                if str(obs['id']) in checked_ids
+            ]
+        else:
+            ids_to_import = []
         
         if not ids_to_import:
             st.warning("Aucune observation sélectionnée.")
