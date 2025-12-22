@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_autocomplete
 from notion_client import Client
-from datetime import date
+from datetime import date, timedelta
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Importateur Myco-Notion", page_icon="🍄", layout="wide")
@@ -477,7 +477,7 @@ if st.session_state.show_selection and st.session_state.search_results:
 
         raw_data.append({
             "Import": is_checked, 
-            "ID": obs['id'],
+            "ID": str(obs['id']), # String to avoid commas
             "Taxon": taxon_name,
             "Date": date_str,
             "Lieu": place,
@@ -485,6 +485,8 @@ if st.session_state.show_selection and st.session_state.search_results:
             "Tags": tag_str,
             "Description": desc_text,
             "GPS": gps_coords,
+            "URL iNat": f"https://www.inaturalist.org/observations/{obs['id']}",
+            "URL Photo": img_url,
             "Image": img_url,
             "_original_obs": obs 
         })
