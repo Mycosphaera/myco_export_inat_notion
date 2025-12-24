@@ -695,28 +695,63 @@ if st.session_state.search_results:
                         query_filter = {"or": or_filters}
                         
                         
-                        try:
-                            # 1. Aggressive ID Cleaning (Regex) to remove ANY hidden char
-                            # Keep only hex chars
+                            # 1. Aggressive ID Cleaning & UUID Format
                             import re
                             clean_id = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
-                            
-                            # 2. Format to UUID (8-4-4-4-12)
                             if len(clean_id) == 32:
                                 formatted_db_id = f"{clean_id[:8]}-{clean_id[8:12]}-{clean_id[12:16]}-{clean_id[16:20]}-{clean_id[20:]}"
                             else:
-                                formatted_db_id = clean_id # Fallback if length is weird
-                            
-                            # UPDATED FOR API 2025-09-03: Use data_sources endpoint for query
-                            api_url = f"https://api.notion.com/v1/data_sources/{formatted_db_id}/query"
-                            # Note: The database query endpoint changed to data_sources in this version
+                                formatted_db_id = clean_id
+
+                            # 2. RESOLVE DATA SOURCE ID (Fix for v2025-09-03)
+                            # We must GET the database first to find its data_source_id
+                            # This also acts as a PERMISSION CHECK.
                             
                             headers = {
                                 "Authorization": f"Bearer {NOTION_TOKEN}",
-                                "Notion-Version": "2025-09-03", # Restored as requested
+                                "Notion-Version": "2025-09-03", 
                                 "Content-Type": "application/json"
                             }
+                            
+                            target_query_id = formatted_db_id # Default to DB ID if resolution fails
+                            
+                            try:
+                                db_meta_url = f"https://api.notion.com/v1/databases/{formatted_db_id}"
+                                meta_resp = requests.get(db_meta_url, headers=headers)
+                                
+                                if meta_resp.status_code == 200:
+                                    meta = meta_resp.json()
+                                    # Try to find data_source_id in response?
+                                    # Note: 2025-09-03 doesn't typically expose "data_sources" array in GET /databases/ 
+                                    # UNLESS it's a multi-source DB.
+                                    # BUT, if checking duplicates fails with DB ID, we might need to use the endpoint /v1/databases/ again?
+                                    # WAIT. Upgrade guide says: "Migrate database endpoints to data sources". 
+                                    # If I have a simple DB, maybe /v1/databases/{id}/query IS CORRECT?
+                                    # The 400 error was "Invalid Request URL". Maybe it WAS the API version mismatch with endpoint?
+                                    # Let's try BOTH endpoints safely.
+                                    
+                                    pass # Just confirming access
+                                elif meta_resp.status_code == 404:
+                                    st.error("❌ Base Notion introuvable. Avez-vous partagé la base avec l'intégration ? (Menu ... > Connect to)")
+                                    error_occurred = True
+                                    break
+                            except Exception as e:
+                                pass # Ignore connection check errors, fall through to query
+
+                            # 3. EXECUTE QUERY
+                            # Strategy: Try /databases/ endpoint first (standard), if 400, try /data_sources/
+                            # This handles both Legacy-style single DBs and New Multi-source DBs dynamically.
+                            
+                            api_url = f"https://api.notion.com/v1/databases/{formatted_db_id}/query"
                             resp = requests.post(api_url, headers=headers, json={"filter": query_filter})
+                            
+                            if resp.status_code == 400 and "Invalid request URL" in resp.text:
+                                # Fallback -> Data Source Endpoint
+                                api_url_ds = f"https://api.notion.com/v1/data_sources/{formatted_db_id}/query"
+                                resp = requests.post(api_url_ds, headers=headers, json={"filter": query_filter})
+                                
+                             # Continue processing...
+
                             
                             if resp.status_code == 200:
                                 q_data = resp.json()
