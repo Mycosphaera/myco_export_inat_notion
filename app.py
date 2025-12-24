@@ -696,11 +696,16 @@ if st.session_state.search_results:
                         
                         
                         try:
-                            # 1. Format Database ID to UUID if it's raw 32 chars
-                            # This is safer for the API
-                            formatted_db_id = DATABASE_ID
-                            if len(DATABASE_ID) == 32 and "-" not in DATABASE_ID:
-                                formatted_db_id = f"{DATABASE_ID[:8]}-{DATABASE_ID[8:12]}-{DATABASE_ID[12:16]}-{DATABASE_ID[16:20]}-{DATABASE_ID[20:]}"
+                            # 1. Aggressive ID Cleaning (Regex) to remove ANY hidden char
+                            # Keep only hex chars
+                            import re
+                            clean_id = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
+                            
+                            # 2. Format to UUID (8-4-4-4-12)
+                            if len(clean_id) == 32:
+                                formatted_db_id = f"{clean_id[:8]}-{clean_id[8:12]}-{clean_id[12:16]}-{clean_id[16:20]}-{clean_id[20:]}"
+                            else:
+                                formatted_db_id = clean_id # Fallback if length is weird
                             
                             api_url = f"https://api.notion.com/v1/databases/{formatted_db_id}/query"
                             
