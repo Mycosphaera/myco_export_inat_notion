@@ -865,11 +865,16 @@ if st.session_state.search_results:
                 
                 # SEND TO NOTION
                 try:
-                    # Debug Info: printing version to confirm we are complying
-                    # st.write(f"DEBUG: Notion Version = {notion.options['notion_version']}")
-                    
+                    # Clean ID & Format UUID (Same robust logic as Duplicate Check)
+                    import re
+                    clean_id_imp = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
+                    if len(clean_id_imp) == 32:
+                        fmt_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}"
+                    else:
+                        fmt_db_id = clean_id_imp
+                        
                     notion.pages.create(
-                        parent={"database_id": DATABASE_ID},
+                        parent={"database_id": fmt_db_id, "type": "database_id"}, # Explicit type as requested
                         properties=props,
                         children=children,
                         cover={"external": {"url": cover_url}} if cover_url else None
