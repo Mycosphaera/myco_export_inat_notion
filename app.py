@@ -695,7 +695,6 @@ if st.session_state.search_results:
                         query_filter = {"or": or_filters}
                         
                         
-                            # 1. Aggressive ID Cleaning & UUID Format
                             import re
                             clean_id = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
                             if len(clean_id) == 32:
