@@ -707,7 +707,9 @@ if st.session_state.search_results:
                             else:
                                 formatted_db_id = clean_id # Fallback if length is weird
                             
-                            api_url = f"https://api.notion.com/v1/databases/{formatted_db_id}/query"
+                            # UPDATED FOR API 2025-09-03: Use data_sources endpoint for query
+                            api_url = f"https://api.notion.com/v1/data_sources/{formatted_db_id}/query"
+                            # Note: The database query endpoint changed to data_sources in this version
                             
                             headers = {
                                 "Authorization": f"Bearer {NOTION_TOKEN}",
