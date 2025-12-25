@@ -211,13 +211,21 @@ with tab4:
                     sel_myco = f_col1.selectbox(f"Mycologue ({myco_key})", ["Tous"] + myco_options)
                     
                     # Projet
+                    # Check Select OR Multi-Select
+                    if projet_key in props_schema:
+                        p_conf = props_schema[projet_key]
+                        if p_conf["type"] == "select":
+                            projet_options = [opt["name"] for opt in p_conf["select"]["options"]]
+                        elif p_conf["type"] == "multi_select":
+                            projet_options = [opt["name"] for opt in p_conf["multi_select"]["options"]]
+                    
                     if projet_options:
                         sel_proj = f_col2.selectbox(f"Projet ({projet_key})", ["Tous"] + projet_options)
                     else:
-                        sel_proj = f_col2.text_input(f"Projet ({projet_key})", placeholder="Nom du projet")
+                        sel_proj = f_col2.text_input(f"Projet ({projet_key})", placeholder="Recherche textuelle...")
                         
-                    # Date
-                    sel_date = f_col3.date_input("Date (Exacte)", value=None)
+                    # Date (Range support)
+                    sel_date = f_col3.date_input("Date (Période)", value=[], help="Sélectionnez une date unique ou une période (début et fin).")
                 
                 f_col4, f_col5 = st.columns(2)
                 
@@ -225,7 +233,6 @@ with tab4:
                 # Prioritize "URL Inaturalist", then "No Inat.", then "INAT"
                 inat_candidates = ["URL Inaturalist", "No Inat.", "INAT", "No Inat"]
                 inat_col_name = "URL Inaturalist"
-                # Find first existing candidate
                 found_inat = False
                 for cand in inat_candidates:
                     if cand in props_schema:
@@ -233,10 +240,9 @@ with tab4:
                         found_inat = True
                         break
                 if not found_inat:
-                     # Fallback fuzzy
                      inat_col_name = next((k for k, v in props_schema.items() if ("inat" in k.lower() or "url" in k.lower()) and v["type"] != "checkbox"), "URL Inaturalist")
                 
-                sel_inat_id = f_col4.text_input(f"ID iNaturalist (via {inat_col_name})", placeholder="ex: 123456")
+                sel_inat_id = f_col4.text_input(f"ID iNaturalist (via {inat_col_name})", placeholder="ex: 123456, 789101 (séparés par virgule)")
                 
                 # Fongarium
                 # Prioritize "No° fongarium", "No fongarium", "Numéro fongarium"
@@ -249,43 +255,86 @@ with tab4:
                         found_fong = True
                         break
                 if not found_fong:
-                     # Fallback, explicitly avoiding "checkbox" types (like 'Fongarium')
                      fong_col_name = next((k for k,v in props_schema.items() if "fongarium" in k.lower() and v["type"] not in ["checkbox", "formula"]), "No° fongarium")
                 
-                sel_fong = f_col5.text_input(f"No° Fongarium (via {fong_col_name})", placeholder="ex: MRD0150...")
+                sel_fong = f_col5.text_input(f"No° Fongarium (via {fong_col_name})", placeholder="ex: MYCO-01, MYCO-02 (séparés par virgule)")
                 
                 # 3. Build Filter Payload
                 notion_filter = {"and": []}
                 
+                # Mycologue
                 if sel_myco != "Tous":
                     notion_filter["and"].append({"property": myco_key, "select": {"equals": sel_myco}})
                 
+                # Projet
                 if sel_proj and sel_proj != "Tous":
                     if projet_options:
-                         notion_filter["and"].append({"property": projet_key, "select": {"equals": sel_proj}})
+                         # Select / Multi-Select
+                         p_type = props_schema[projet_key]["type"]
+                         if p_type == "select":
+                             notion_filter["and"].append({"property": projet_key, "select": {"equals": sel_proj}})
+                         elif p_type == "multi_select":
+                             notion_filter["and"].append({"property": projet_key, "multi_select": {"contains": sel_proj}})
                     elif projet_key in props_schema:
-                         # Fallback if text
+                         # Text Fallback
                          p_type = props_schema[projet_key]["type"]
                          if p_type == "select":
                               notion_filter["and"].append({"property": projet_key, "select": {"equals": sel_proj}})
+                         elif p_type == "multi_select":
+                              notion_filter["and"].append({"property": projet_key, "multi_select": {"contains": sel_proj}})
                          elif p_type == "rich_text":
                               notion_filter["and"].append({"property": projet_key, "rich_text": {"contains": sel_proj}})
 
+                # Date
                 if sel_date:
-                    notion_filter["and"].append({"property": "Date", "date": {"equals": sel_date.isoformat()}})
+                    if len(sel_date) == 1:
+                         # Exact Date (Day)
+                         notion_filter["and"].append({"property": "Date", "date": {"equals": sel_date[0].isoformat()}})
+                    elif len(sel_date) == 2:
+                         # Range
+                         start_d, end_d = sel_date
+                         if start_d > end_d: start_d, end_d = end_d, start_d # Swap safely
+                         notion_filter["and"].append({
+                             "and": [
+                                 {"property": "Date", "date": {"on_or_after": start_d.isoformat()}},
+                                 {"property": "Date", "date": {"on_or_before": end_d.isoformat()}}
+                             ]
+                         })
                 
+                # iNat ID (Multi)
                 if sel_inat_id:
-                     type_inat = props_schema.get(inat_col_name, {}).get("type", "url")
-                     if type_inat == "url":
-                          notion_filter["and"].append({"property": inat_col_name, "url": {"contains": sel_inat_id}})
-                     elif type_inat == "number":
-                          notion_filter["and"].append({"property": inat_col_name, "number": {"equals": int(sel_inat_id)}})
-                     else:
-                          notion_filter["and"].append({"property": inat_col_name, "rich_text": {"contains": sel_inat_id}})
+                     # Parse CSV
+                     id_tokens = [t.strip() for t in sel_inat_id.replace(","," ").split() if t.strip()]
+                     if id_tokens:
+                         type_inat = props_schema.get(inat_col_name, {}).get("type", "url")
+                         or_clause = {"or": []}
+                         
+                         for t in id_tokens:
+                             if type_inat == "url":
+                                  or_clause["or"].append({"property": inat_col_name, "url": {"contains": t}})
+                             elif type_inat == "number":
+                                  try:
+                                      val = int(t)
+                                      or_clause["or"].append({"property": inat_col_name, "number": {"equals": val}})
+                                  except: pass
+                             else:
+                                  or_clause["or"].append({"property": inat_col_name, "rich_text": {"contains": t}})
+                         
+                         if or_clause["or"]:
+                             notion_filter["and"].append(or_clause)
 
+                # Fongarium (Multi)
                 if sel_fong:
-                    # Usually Rich Text
-                    notion_filter["and"].append({"property": fong_col_name, "rich_text": {"contains": sel_fong}})
+                    # Parse CSV
+                    fong_tokens = [t.strip() for t in sel_fong.replace(","," ").split() if t.strip()]
+                    if fong_tokens:
+                        or_clause = {"or": []}
+                        # Usually Rich Text
+                        for t in fong_tokens:
+                            or_clause["or"].append({"property": fong_col_name, "rich_text": {"contains": t}})
+                        
+                        if or_clause["or"]:
+                             notion_filter["and"].append(or_clause)
 
                 # Payload
                 query_payload = {
