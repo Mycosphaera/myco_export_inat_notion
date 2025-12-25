@@ -132,22 +132,23 @@ with tab3:
                  
                  submitted = st.form_submit_button("Générer PDF 📄", type="primary")
                  
-                 if submitted and selected_obs_objects:
-                      options = {
-                          "title": title_input,
-                          "include_coords": include_coords
-                      }
-                      try:
-                          pdf_data = generate_label_pdf(selected_obs_objects, options)
-                          st.balloons()
-                          st.download_button(
-                              label="📥 Télécharger le PDF",
-                              data=pdf_data,
-                              file_name="etiquettes_myco.pdf",
-                              mime="application/pdf"
-                          )
-                      except Exception as e:
-                          st.error(f"Erreur lors de la génération : {e}")
+             if submitted and selected_obs_objects:
+                  options = {
+                      "title": title_input,
+                      "include_coords": include_coords
+                  }
+                  try:
+                      pdf_data = generate_label_pdf(selected_obs_objects, options)
+                      st.balloons()
+                      st.success("PDF Généré avec succès !")
+                      st.download_button(
+                          label="📥 Télécharger le PDF",
+                          data=pdf_data,
+                          file_name="etiquettes_myco.pdf",
+                          mime="application/pdf"
+                      )
+                  except Exception as e:
+                      st.error(f"Erreur lors de la génération : {e}")
 
 with tab1:
     with st.container(border=True):
