@@ -1,4 +1,5 @@
-streamlit==1.40.0
+streamlit>=1.42.0
 pandas
 notion-client
 pyinaturalist>=0.14.0
+st-styled
