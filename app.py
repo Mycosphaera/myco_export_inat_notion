@@ -99,301 +99,302 @@ run_search = False
 import_list = [] # Will hold IDs or Obs to import
 
 with tab1:
-    st.markdown("### Filtres d'observation")
-    col_filters_1, col_filters_2, col_filters_3 = st.columns([1, 1, 1])
+    with st.container(border=True):
+        st.markdown("### 🌪️ Filtres de Recherche")
+        col_filters_1, col_filters_2, col_filters_3 = st.columns([1, 1, 1])
 
-    with col_filters_1:
-        st.markdown("**👤 Personne & Projet**")
-        # User Selection with Validation
-        c_usr_input, c_usr_add = st.columns([3, 1])
-        new_user = c_usr_input.text_input("Ajouter un utilisateur", placeholder="Nom d'utilisateur", label_visibility="collapsed")
-        
-        if c_usr_add.button("➕", help="Ajouter l'utilisateur"):
-            if new_user:
-                try:
-                    # Validate against API using Requests directly
-                    # iNaturalist API v1 search
-                    url = f"https://api.inaturalist.org/v1/users/autocomplete?q={new_user}&per_page=5"
-                    headers = {"User-Agent": "StreamlitMycoImport/1.0 (mathieu@example.com)"}
-                    resp = requests.get(url, headers=headers)
-                    
-                    if resp.status_code == 200:
-                        data = resp.json()
-                    else:
-                        st.error(f"Erreur HTTP {resp.status_code} de l'API iNaturalist.")
-                        data = {}
-                    
-                    # Check exact match or close enough (API fuzzy searches)
-                    valid_user = None
-                    if 'results' in data and data['results']:
-                        # Check strict case-insensitive match
-                        matches = [u['login'] for u in data['results'] if u['login'].lower() == new_user.lower()]
-                        if matches:
-                            valid_user = matches[0]
+        with col_filters_1:
+            st.markdown("**👤 Personne & Projet**")
+            # User Selection with Validation
+            c_usr_input, c_usr_add = st.columns([3, 1])
+            new_user = c_usr_input.text_input("Ajouter un utilisateur", placeholder="Nom d'utilisateur", label_visibility="collapsed")
+            
+            if c_usr_add.button("➕", help="Ajouter l'utilisateur"):
+                if new_user:
+                    try:
+                        # Validate against API using Requests directly
+                        # iNaturalist API v1 search
+                        url = f"https://api.inaturalist.org/v1/users/autocomplete?q={new_user}&per_page=5"
+                        headers = {"User-Agent": "StreamlitMycoImport/1.0 (mathieu@example.com)"}
+                        resp = requests.get(url, headers=headers)
+                        
+                        if resp.status_code == 200:
+                            data = resp.json()
                         else:
-                             # Optional: If exact match not found but results exist, could suggest?
-                             pass
-                    
-                    if valid_user:
-                        if valid_user not in st.session_state.selected_users:
-                            st.session_state.selected_users.append(valid_user)
-                            st.success(f"Ajouté : {valid_user}")
-                            st.rerun()
+                            st.error(f"Erreur HTTP {resp.status_code} de l'API iNaturalist.")
+                            data = {}
+                        
+                        # Check exact match or close enough (API fuzzy searches)
+                        valid_user = None
+                        if 'results' in data and data['results']:
+                            # Check strict case-insensitive match
+                            matches = [u['login'] for u in data['results'] if u['login'].lower() == new_user.lower()]
+                            if matches:
+                                valid_user = matches[0]
+                            else:
+                                 # Optional: If exact match not found but results exist, could suggest?
+                                 pass
+                        
+                        if valid_user:
+                            if valid_user not in st.session_state.selected_users:
+                                st.session_state.selected_users.append(valid_user)
+                                st.success(f"Ajouté : {valid_user}")
+                                st.rerun()
+                            else:
+                                st.warning("Déjà ajouté.")
                         else:
-                            st.warning("Déjà ajouté.")
-                    else:
-                        st.error(f"Utilisateur '{new_user}' introuvable sur iNaturalist.")
-                except Exception as e:
-                    st.error(f"Erreur API: {e}")
+                            st.error(f"Utilisateur '{new_user}' introuvable sur iNaturalist.")
+                    except Exception as e:
+                        st.error(f"Erreur API: {e}")
 
-        # Display Selected Users
-        if st.session_state.selected_users:
-            st.caption("Utilisateurs sélectionnés (Cliquez pour retirer) :")
-            # Use multi-select pills to show/remove
-            # If user unselects, we remove from state.
-            current_selection = st.pills(
-                "Users",
-                options=st.session_state.selected_users,
-                default=st.session_state.selected_users,
+            # Display Selected Users
+            if st.session_state.selected_users:
+                st.caption("Utilisateurs sélectionnés (Cliquez pour retirer) :")
+                # Use multi-select pills to show/remove
+                # If user unselects, we remove from state.
+                current_selection = st.pills(
+                    "Users",
+                    options=st.session_state.selected_users,
+                    default=st.session_state.selected_users,
+                    selection_mode="multi",
+                    label_visibility="collapsed",
+                    key="user_pills"
+                )
+                
+                # Detect removal
+                if len(current_selection) < len(st.session_state.selected_users):
+                    st.session_state.selected_users = current_selection
+                    # st.rerun() removed to avoid "Bad message format" in Streamlit 1.40+
+                    pass
+            else:
+                # Default fallback if empty? User requested selection.
+                # If empty, maybe use default_user if provided? 
+                # Logic below uses selected_users if present, else default?
+                # Let's keep it clean: params will use this list. 
+                # If list empty, maybe params['user_id'] is empty (all users)? Or default?
+                if default_user and not st.session_state.selected_users:
+                     # Pre-populate default if nothing selected yet?
+                     # Risky if they want "All". 
+                     # Let's just show "Aucun utilisateur filtré (Tout le monde)"
+                     st.info("Aucun filtre utilisateur (Tout le monde)")
+
+            # Compatibility with downstream logic
+            # function will join st.session_state.selected_users
+            
+             # --- TAXON SEARCH ENGINE ---
+            # --- TAXON SEARCH ENGINE ---
+            st.markdown("**🍄 Groupe Taxonomique**")
+            
+            # 1. ICONIC TAXA DEFINITION (Maps to User Screenshot)
+            # ID Source: https://www.inaturalist.org/pages/api+reference#get-taxa
+            ICONIC_TAXA = {
+                "Oiseaux 🐦": 3,
+                "Amphibiens 🐸": 20978,
+                "Reptiles 🐍": 26036,
+                "Mammifères 🐀": 40151,
+                "Poissons 🐟": 47178, # Actinopterygii (Ray-finned fishes) - broadly "fish"
+                "Mollusques 🐌": 47115,
+                "Arachnides 🕷️": 47119,
+                "Insectes 🐞": 47158,
+                "Plantes 🌿": 47126,
+                "Champignons 🍄": 47170,
+                "Protozoaires 🦠": 47686,
+                "Inconnu ❓": "unknown" 
+            }
+            
+            # Options for pills
+            pill_options = list(ICONIC_TAXA.keys())
+            
+            # Default to Fungi
+            default_selection = ["Champignons 🍄"]
+            
+            # Selection (Multi)
+            selected_icons = st.pills(
+                "Groupe",
+                options=pill_options,
+                default=default_selection,
                 selection_mode="multi",
                 label_visibility="collapsed",
-                key="user_pills"
+                key="taxon_pills"
             )
             
-            # Detect removal
-            if len(current_selection) < len(st.session_state.selected_users):
-                st.session_state.selected_users = current_selection
-                # st.rerun() removed to avoid "Bad message format" in Streamlit 1.40+
-                pass
-        else:
-            # Default fallback if empty? User requested selection.
-            # If empty, maybe use default_user if provided? 
-            # Logic below uses selected_users if present, else default?
-            # Let's keep it clean: params will use this list. 
-            # If list empty, maybe params['user_id'] is empty (all users)? Or default?
-            if default_user and not st.session_state.selected_users:
-                 # Pre-populate default if nothing selected yet?
-                 # Risky if they want "All". 
-                 # Let's just show "Aucun utilisateur filtré (Tout le monde)"
-                 st.info("Aucun filtre utilisateur (Tout le monde)")
-
-        # Compatibility with downstream logic
-        # function will join st.session_state.selected_users
-        
-         # --- TAXON SEARCH ENGINE ---
-        # --- TAXON SEARCH ENGINE ---
-        st.markdown("**🍄 Groupe Taxonomique**")
-        
-        # 1. ICONIC TAXA DEFINITION (Maps to User Screenshot)
-        # ID Source: https://www.inaturalist.org/pages/api+reference#get-taxa
-        ICONIC_TAXA = {
-            "Oiseaux 🐦": 3,
-            "Amphibiens 🐸": 20978,
-            "Reptiles 🐍": 26036,
-            "Mammifères 🐀": 40151,
-            "Poissons 🐟": 47178, # Actinopterygii (Ray-finned fishes) - broadly "fish"
-            "Mollusques 🐌": 47115,
-            "Arachnides 🕷️": 47119,
-            "Insectes 🐞": 47158,
-            "Plantes 🌿": 47126,
-            "Champignons 🍄": 47170,
-            "Protozoaires 🦠": 47686,
-            "Inconnu ❓": "unknown" 
-        }
-        
-        # Options for pills
-        pill_options = list(ICONIC_TAXA.keys())
-        
-        # Default to Fungi
-        default_selection = ["Champignons 🍄"]
-        
-        # Selection (Multi)
-        selected_icons = st.pills(
-            "Groupe",
-            options=pill_options,
-            default=default_selection,
-            selection_mode="multi",
-            label_visibility="collapsed",
-            key="taxon_pills"
-        )
-        
-        # Determine Base ID from Pills
-        taxon_id = None
-        if selected_icons:
-            ids = []
-            for icon in selected_icons:
-                tid = ICONIC_TAXA.get(icon)
-                if tid and tid != "unknown":
-                    ids.append(str(tid))
-            
-            if ids:
-                taxon_id = ",".join(ids) # iNat API accepts comma separated IDs
-        
-        # 2. OPTIONAL: Specific Text Override
-        with st.expander("🔍 Recherche précise (Espèce/Genre)"):
-            taxon_query = st.text_input("Nom scientifique ou commun", placeholder="ex: Canis lupus")
-            if taxon_query:
-                try:
-                    taxa = get_taxa_autocomplete(q=taxon_query, per_page=10)
-                    if taxa['results']:
-                        taxon_options = {f"{t['name']} ({t.get('preferred_common_name', 'No common name')})": t['id'] for t in taxa['results']}
-                        selected_taxon_name = st.selectbox("Sélectionner:", options=taxon_options.keys())
-                        # OVERRIDE Pill ID
-                        taxon_id = taxon_options[selected_taxon_name]
-                        st.success(f"Filtre actif : {selected_taxon_name} (ID: {taxon_id})")
-                    else:
-                        st.warning("Aucun taxon trouvé.")
-                except Exception as e:
-                    st.error(f"Erreur recherche: {e}")
-            elif not taxon_id:
-                st.caption("Filtre actuel : Aucun (Tout afficher)")
-            else:
-                st.caption(f"Filtre actuel : {selected_icons} (IDs: {taxon_id})")
-
-    with col_filters_2:
-        st.markdown("**🌍 Lieu**")
-        place_query = st.text_input("Chercher un lieu (Ville, Province...)", placeholder="ex: Québec")
-        selected_place_id = None
-        
-        if place_query:
-            try:
-                places = get_places_autocomplete(q=place_query, per_page=10)
-                if places['results']:
-                    place_options = {f"{p['display_name']} ({p.get('place_type_name', 'Type inconnu')})": p['id'] for p in places['results']}
-                    selected_name = st.selectbox("📍 Sélectionner le lieu exact :", options=place_options.keys())
-                    selected_place_id = place_options[selected_name]
-                    st.success(f"Lieu sélectionné : ID {selected_place_id}")
-                else:
-                    st.warning("Aucun lieu trouvé.")
-            except Exception as e:
-                st.error(f"Erreur recherche lieu: {e}")
-        else:
-            st.info("Laissez vide pour le monde entier.")
-
-    with col_filters_3:
-        # Quick Date Presets
-        st.markdown("**📅 Date d'observation**")
-        c_q1, c_q2, c_q3, c_q4 = st.columns(4)
-        today = date.today()
-        
-        if c_q1.button("Auj.", type="secondary", use_container_width=True, help="Aujourd'hui"):
-            st.session_state.d_start = today
-            st.session_state.d_end = today
-            st.rerun()
-            
-        if c_q2.button("Sem.", type="secondary", use_container_width=True, help="7 derniers jours"):
-            st.session_state.d_start = today - timedelta(days=6)
-            st.session_state.d_end = today
-            st.rerun()
-
-        if c_q3.button("2 Sem.", type="secondary", use_container_width=True, help="14 derniers jours"):
-            st.session_state.d_start = today - timedelta(days=13)
-            st.session_state.d_end = today
-            st.rerun()
-            
-        if c_q4.button("Mois", type="secondary", use_container_width=True, help="Depuis le 1er du mois"):
-            start_month = today.replace(day=1)
-            st.session_state.d_start = start_month
-            st.session_state.d_end = today
-            st.rerun()
-
-        date_mode = st.radio("Type de date", ["Période", "Date exacte", "Multi-dates", "Tout"], index=0, key="date_mode_radio")
-        
-        d1, d2 = None, None
-        
-        if date_mode == "Date exacte":
-            the_date = st.date_input("Date", value=date.today())
-            d1, d2 = the_date, the_date
-            
-        elif date_mode == "Période":
-            c_start, c_end = st.columns(2)
-            # Use keys to allow button updates
-            d1 = c_start.date_input("Du", value=date(2024, 1, 1), key="d_start")
-            d2 = c_end.date_input("Au", value=today, key="d_end")
-            
-        elif date_mode == "Multi-dates":
-            c_add, c_btn = st.columns([2, 1])
-            new_date = c_add.date_input("Ajouter une date", value=date.today(), label_visibility="collapsed")
-            if c_btn.button("Ajouter", use_container_width=True):
-                if new_date not in st.session_state.custom_dates:
-                    st.session_state.custom_dates.append(new_date)
-                    st.session_state.custom_dates.sort()
-            
-            if st.session_state.custom_dates:
-                st.caption("Dates sélectionnées :")
-                # Display simply
-                for i, d in enumerate(st.session_state.custom_dates):
-                    c_date, c_del = st.columns([4, 1])
-                    c_date.code(d.strftime("%Y-%m-%d"))
-                    if c_del.button("❌", key=f"del_{i}", help="Supprimer cette date"):
-                        st.session_state.custom_dates.pop(i)
-                        # No rerun needed, button already triggers it
-                        pass
+            # Determine Base ID from Pills
+            taxon_id = None
+            if selected_icons:
+                ids = []
+                for icon in selected_icons:
+                    tid = ICONIC_TAXA.get(icon)
+                    if tid and tid != "unknown":
+                        ids.append(str(tid))
                 
-                if st.button("🗑️ Effacer tout", type="secondary"):
-                    st.session_state.custom_dates = []
-                    st.rerun()
-            else:
-                st.info("Aucune date ajoutée.")
-
-    st.divider()
-
-    # Limit Selection
-    c_search, c_limit = st.columns([3, 1])
-    limit_option = c_limit.selectbox("Nombre de résultats", [50, 100, 200, 500, "Tout (Attention !)"], index=0)
-    
-    if st.button("🔄 Réinitialiser la recherche", type="secondary"):
-        st.session_state.search_results = []
-        st.session_state.custom_dates = []
-        st.session_state.selected_users = []
-        st.session_state.selection_states = {}
-        st.rerun()
-
-    if c_search.button("🔎 Lancer la recherche", type="primary", use_container_width=True):
-        # Use verified list OR default if empty? 
-        # Actually user might want "default_user" to start with.
-        # Let's add default_user to selected_users on init if list is empty?
-        # For now, explicit list.
-        user_list = st.session_state.selected_users
-        if not user_list and default_user:
-             # Fallback to text input default if they didn't touch the new widget? 
-             # No, confusing. Let's trust the widget.
-             # If widget empty -> All users?
-             # User prompt implies "verify name".
-             # If I type mycosphaera in default, I expect it used.
-             # I should probably auto-add default_user to list on startup.
-             pass
-        
-        # Pre-pulate
-        if not st.session_state.selected_users:
-             if default_user:
-                 user_list = [default_user]
-             
-             # Fallback: If user typed in "Add User" but didn't click Plus, let's try to use it?
-             # BUT only if they didn't set a default_user or if they rely on text input.
-             # Actually, if new_user is present, it's a strong signal they want it.
-             if new_user and new_user not in user_list:
-                  # Use the typed user instead of (or with?) default? 
-                  # Usually "Add User" implies override. 
-                  # Let's add it to the search list.
-                  user_list = [new_user] 
-
-        # Determine Limit
-        fetch_limit = 50
-        if isinstance(limit_option, int):
-            fetch_limit = limit_option
-        else:
-            fetch_limit = 10000 # "Tout" -> large number
+                if ids:
+                    taxon_id = ",".join(ids) # iNat API accepts comma separated IDs
             
-        params = {
-            "user_id": user_list,
-            "d1": d1, 
-            "d2": d2, 
-            "taxon_id": taxon_id, 
-            "place_id": selected_place_id,
-            "per_page": 200 # Request max allowed per page
-        }
-        run_search = True
+            # 2. OPTIONAL: Specific Text Override
+            with st.expander("🔍 Recherche précise (Espèce/Genre)"):
+                taxon_query = st.text_input("Nom scientifique ou commun", placeholder="ex: Canis lupus")
+                if taxon_query:
+                    try:
+                        taxa = get_taxa_autocomplete(q=taxon_query, per_page=10)
+                        if taxa['results']:
+                            taxon_options = {f"{t['name']} ({t.get('preferred_common_name', 'No common name')})": t['id'] for t in taxa['results']}
+                            selected_taxon_name = st.selectbox("Sélectionner:", options=taxon_options.keys())
+                            # OVERRIDE Pill ID
+                            taxon_id = taxon_options[selected_taxon_name]
+                            st.success(f"Filtre actif : {selected_taxon_name} (ID: {taxon_id})")
+                        else:
+                            st.warning("Aucun taxon trouvé.")
+                    except Exception as e:
+                        st.error(f"Erreur recherche: {e}")
+                elif not taxon_id:
+                    st.caption("Filtre actuel : Aucun (Tout afficher)")
+                else:
+                    st.caption(f"Filtre actuel : {selected_icons} (IDs: {taxon_id})")
+
+        with col_filters_2:
+            st.markdown("**🌍 Lieu**")
+            place_query = st.text_input("Chercher un lieu (Ville, Province...)", placeholder="ex: Québec")
+            selected_place_id = None
+            
+            if place_query:
+                try:
+                    places = get_places_autocomplete(q=place_query, per_page=10)
+                    if places['results']:
+                        place_options = {f"{p['display_name']} ({p.get('place_type_name', 'Type inconnu')})": p['id'] for p in places['results']}
+                        selected_name = st.selectbox("📍 Sélectionner le lieu exact :", options=place_options.keys())
+                        selected_place_id = place_options[selected_name]
+                        st.success(f"Lieu sélectionné : ID {selected_place_id}")
+                    else:
+                        st.warning("Aucun lieu trouvé.")
+                except Exception as e:
+                    st.error(f"Erreur recherche lieu: {e}")
+            else:
+                st.info("Laissez vide pour le monde entier.")
+
+        with col_filters_3:
+            # Quick Date Presets
+            st.markdown("**📅 Date d'observation**")
+            c_q1, c_q2, c_q3, c_q4 = st.columns(4)
+            today = date.today()
+            
+            if c_q1.button("Auj.", type="secondary", use_container_width=True, help="Aujourd'hui"):
+                st.session_state.d_start = today
+                st.session_state.d_end = today
+                st.rerun()
+                
+            if c_q2.button("Sem.", type="secondary", use_container_width=True, help="7 derniers jours"):
+                st.session_state.d_start = today - timedelta(days=6)
+                st.session_state.d_end = today
+                st.rerun()
+
+            if c_q3.button("2 Sem.", type="secondary", use_container_width=True, help="14 derniers jours"):
+                st.session_state.d_start = today - timedelta(days=13)
+                st.session_state.d_end = today
+                st.rerun()
+                
+            if c_q4.button("Mois", type="secondary", use_container_width=True, help="Depuis le 1er du mois"):
+                start_month = today.replace(day=1)
+                st.session_state.d_start = start_month
+                st.session_state.d_end = today
+                st.rerun()
+
+            date_mode = st.radio("Type de date", ["Période", "Date exacte", "Multi-dates", "Tout"], index=0, key="date_mode_radio")
+            
+            d1, d2 = None, None
+            
+            if date_mode == "Date exacte":
+                the_date = st.date_input("Date", value=date.today())
+                d1, d2 = the_date, the_date
+                
+            elif date_mode == "Période":
+                c_start, c_end = st.columns(2)
+                # Use keys to allow button updates
+                d1 = c_start.date_input("Du", value=date(2024, 1, 1), key="d_start")
+                d2 = c_end.date_input("Au", value=today, key="d_end")
+                
+            elif date_mode == "Multi-dates":
+                c_add, c_btn = st.columns([2, 1])
+                new_date = c_add.date_input("Ajouter une date", value=date.today(), label_visibility="collapsed")
+                if c_btn.button("Ajouter", use_container_width=True):
+                    if new_date not in st.session_state.custom_dates:
+                        st.session_state.custom_dates.append(new_date)
+                        st.session_state.custom_dates.sort()
+                
+                if st.session_state.custom_dates:
+                    st.caption("Dates sélectionnées :")
+                    # Display simply
+                    for i, d in enumerate(st.session_state.custom_dates):
+                        c_date, c_del = st.columns([4, 1])
+                        c_date.code(d.strftime("%Y-%m-%d"))
+                        if c_del.button("❌", key=f"del_{i}", help="Supprimer cette date"):
+                            st.session_state.custom_dates.pop(i)
+                            # No rerun needed, button already triggers it
+                            pass
+                    
+                    if st.button("🗑️ Effacer tout", type="secondary"):
+                        st.session_state.custom_dates = []
+                        st.rerun()
+                else:
+                    st.info("Aucune date ajoutée.")
+
+        st.divider()
+
+        # Limit Selection
+        c_search, c_limit = st.columns([3, 1])
+        limit_option = c_limit.selectbox("Nombre de résultats", [50, 100, 200, 500, "Tout (Attention !)"], index=0)
+        
+        if st.button("🔄 Réinitialiser la recherche", type="secondary"):
+            st.session_state.search_results = []
+            st.session_state.custom_dates = []
+            st.session_state.selected_users = []
+            st.session_state.selection_states = {}
+            st.rerun()
+
+        if c_search.button("🔎 Lancer la recherche", type="primary", use_container_width=True):
+            # Use verified list OR default if empty? 
+            # Actually user might want "default_user" to start with.
+            # Let's add default_user to selected_users on init if list is empty?
+            # For now, explicit list.
+            user_list = st.session_state.selected_users
+            if not user_list and default_user:
+                 # Fallback to text input default if they didn't touch the new widget? 
+                 # No, confusing. Let's trust the widget.
+                 # If widget empty -> All users?
+                 # User prompt implies "verify name".
+                 # If I type mycosphaera in default, I expect it used.
+                 # I should probably auto-add default_user to list on startup.
+                 pass
+            
+            # Pre-pulate
+            if not st.session_state.selected_users:
+                 if default_user:
+                     user_list = [default_user]
+                 
+                 # Fallback: If user typed in "Add User" but didn't click Plus, let's try to use it?
+                 # BUT only if they didn't set a default_user or if they rely on text input.
+                 # Actually, if new_user is present, it's a strong signal they want it.
+                 if new_user and new_user not in user_list:
+                      # Use the typed user instead of (or with?) default? 
+                      # Usually "Add User" implies override. 
+                      # Let's add it to the search list.
+                      user_list = [new_user] 
+
+            # Determine Limit
+            fetch_limit = 50
+            if isinstance(limit_option, int):
+                fetch_limit = limit_option
+            else:
+                fetch_limit = 10000 # "Tout" -> large number
+                
+            params = {
+                "user_id": user_list,
+                "d1": d1, 
+                "d2": d2, 
+                "taxon_id": taxon_id, 
+                "place_id": selected_place_id,
+                "per_page": 200 # Request max allowed per page
+            }
+            run_search = True
 
 with tab2:
     ids_input = st.text_area("IDs (séparés par virgules ou sauts de ligne)")
