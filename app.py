@@ -163,13 +163,115 @@ with tab4:
         # Let's simple query last 50 created.
         if NOTION_TOKEN and DATABASE_ID:
             try:
+                # 1. Fetch Schema for Options
+                db_info = notion.databases.retrieve(database_id=DATABASE_ID)
+                props_schema = db_info.get("properties", {})
+                
+                # Extract Select Options
+                myco_options = []
+                if "Mycologue" in props_schema and props_schema["Mycologue"]["type"] == "select":
+                    myco_options = [opt["name"] for opt in props_schema["Mycologue"]["select"]["options"]]
+                
+                projet_options = []
+                # Guessing exact name "Projet d'inventaire" or similar?
+                # Let's look for "Projet", "Inventaire" if exact match fails
+                projet_key = "Projet d'inventaire"
+                if projet_key not in props_schema:
+                    # Fuzzy find?
+                    for k in props_schema.keys():
+                        if "projet" in k.lower():
+                            projet_key = k
+                            break
+                
+                if projet_key in props_schema and props_schema[projet_key]["type"] == "select":
+                     projet_options = [opt["name"] for opt in props_schema[projet_key]["select"]["options"]]
+                
+                # 2. Filter Bar
+                with st.expander("🔍 Filtres Notion Avancés", expanded=True):
+                    f_col1, f_col2, f_col3 = st.columns(3)
+                    
+                    # Mycologue
+                    sel_myco = f_col1.selectbox("Mycologue", ["Tous"] + myco_options)
+                    
+                    # Projet
+                    if projet_options:
+                        sel_proj = f_col2.selectbox("Projet d'inventaire", ["Tous"] + projet_options)
+                    else:
+                        sel_proj = f_col2.text_input("Projet d'inventaire", placeholder="Nom du projet")
+                        
+                    # Date
+                    sel_date = f_col3.date_input("Date (Exacte)", value=None)
+                
+                f_col4, f_col5 = st.columns(2)
+                # iNat ID
+                # Try to map column Name
+                inat_col_name = "URL Inaturalist"
+                if "INAT" in props_schema: inat_col_name = "INAT" # User hint
+                
+                sel_inat_id = f_col4.text_input(f"ID iNaturalist (via {inat_col_name})", placeholder="ex: 123456")
+                
+                # Fongarium
+                fong_col_name = "No° fongarium"
+                # Check exist
+                if fong_col_name not in props_schema:
+                     # Check "No" or "Fongarium"
+                     for k in props_schema.keys():
+                         if "fongarium" in k.lower():
+                             fong_col_name = k
+                             break
+                sel_fong = f_col5.text_input("No° Fongarium", placeholder="ex: MYCO-2024...")
+                
+                # 3. Build Filter Payload
+                notion_filter = {"and": []}
+                
+                if sel_myco != "Tous":
+                    notion_filter["and"].append({"property": "Mycologue", "select": {"equals": sel_myco}})
+                
+                if sel_proj and sel_proj != "Tous":
+                    if projet_options:
+                         # It was a select
+                         notion_filter["and"].append({"property": projet_key, "select": {"equals": sel_proj}})
+                    else:
+                         # Text input
+                         # Assuming it might be a Select property we search by text, or a Text property? 
+                         # Safest is to try "rich_text" contains if it's text, or... 
+                         # If we don't know type, it's risky. But usually "Projet" is Select. 
+                         # If options were empty, maybe it's text.
+                         if projet_key in props_schema and props_schema[projet_key]["type"] == "select":
+                              notion_filter["and"].append({"property": projet_key, "select": {"equals": sel_proj}})
+                         else:
+                              notion_filter["and"].append({"property": projet_key, "rich_text": {"contains": sel_proj}})
+
+                if sel_date:
+                    notion_filter["and"].append({"property": "Date", "date": {"equals": sel_date.isoformat()}})
+                
+                if sel_inat_id:
+                     # If URL column, implies 'contains' ID? Or if pure ID column (number/text).
+                     # "URL Inaturalist" is type 'url'. 'url' filter supports 'contains'.
+                     type_inat = props_schema.get(inat_col_name, {}).get("type", "url")
+                     if type_inat == "url":
+                          notion_filter["and"].append({"property": inat_col_name, "url": {"contains": sel_inat_id}})
+                     elif type_inat == "number":
+                          notion_filter["and"].append({"property": inat_col_name, "number": {"equals": int(sel_inat_id)}})
+                     else:
+                          notion_filter["and"].append({"property": inat_col_name, "rich_text": {"contains": sel_inat_id}})
+
+                if sel_fong:
+                    # Usually Rich Text
+                    notion_filter["and"].append({"property": fong_col_name, "rich_text": {"contains": sel_fong}})
+
+                # If no filters, keep "and": [] -> Notion accepts this? No, might error.
+                query_payload = {
+                    "database_id": DATABASE_ID,
+                    "page_size": 50,
+                    "sorts": [{"timestamp": "created_time", "direction": "descending"}]
+                }
+                
+                if notion_filter["and"]:
+                     query_payload["filter"] = notion_filter
+                
                 # Query Notion
-                # Sort by Created Time Descending
-                resp_notion = notion.databases.query(
-                    database_id=DATABASE_ID,
-                    page_size=50,
-                    sorts=[{"timestamp": "created_time", "direction": "descending"}]
-                )
+                resp_notion = notion.databases.query(**query_payload)
                 
                 rows_notion = []
                 for p in resp_notion.get("results", []):
@@ -218,7 +320,7 @@ with tab4:
                     # Add Selection Column
                     df_notion.insert(0, "Imprimer", False)
                     
-                    st.write(f"**{len(rows_notion)} dernières entrées trouvées.**")
+                    st.write(f"**{len(rows_notion)} résultats trouvés.**")
                     
                     # Data Editor for Selection
                     edited_df = st.data_editor(
