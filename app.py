@@ -29,8 +29,14 @@ def show_details(obs_data):
         st.caption("Description:")
         st.write(obs_data['Description'])
 
-st.title("🍄 Importateur iNaturalist → Notion")
-st.caption("Configuration: Filtres naturels & Recherche de lieux")
+# --- HEADER SECTION ---
+st.markdown("""
+<div class="brand-container">
+    <p class="brand-tag">MYCOSPHAERA</p>
+    <h1 class="main-title">iNat Sync</h1>
+    <p class="subtitle">Gestionnaire d'observations & passerelle Notion</p>
+</div>
+""", unsafe_allow_html=True)
 
 # --- STATE MANAGEMENT ---
 if 'search_results' not in st.session_state:
