@@ -49,7 +49,10 @@ def create_label_flowables(obs, styles, options):
     collector = user_name if user_name else user_login
     
     # URL for QR
-    obs_url = f"https://www.inaturalist.org/observations/{obs['id']}"
+    if obs.get('custom_url'):
+        obs_url = obs['custom_url']
+    else:
+        obs_url = f"https://www.inaturalist.org/observations/{obs['id']}"
     
     # Generate QR
     qr_img_data = generate_qr_code(obs_url)

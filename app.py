@@ -94,7 +94,7 @@ if NOTION_TOKEN:
     notion = Client(auth=NOTION_TOKEN, notion_version="2025-09-03")
 
 # --- INTERFACE ---
-tab1, tab2, tab3 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes"])
+tab1, tab2, tab3, tab4 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes", "📚 Explorer Notion"])
 params = {}
 run_search = False
 import_list = [] # Will hold IDs or Obs to import
@@ -149,6 +149,142 @@ with tab3:
                       )
                   except Exception as e:
                       st.error(f"Erreur lors de la génération : {e}")
+
+with tab4:
+    with st.container(border=True):
+        st.markdown("### 📚 Explorateur de Base de Données Notion")
+        st.caption("Visualisez les dernières entrées de votre base Notion et générez des étiquettes directement.")
+        
+        c_notion_cols = st.columns([3, 1])
+        if c_notion_cols[1].button("🔄 Actualiser Notion", type="primary"):
+            st.rerun()
+
+        # Fetch from Notion (Limit to last 100 for perf? or Date filter?)
+        # Let's simple query last 50 created.
+        if NOTION_TOKEN and DATABASE_ID:
+            try:
+                # Query Notion
+                # Sort by Created Time Descending
+                resp_notion = notion.databases.query(
+                    database_id=DATABASE_ID,
+                    page_size=50,
+                    sorts=[{"timestamp": "created_time", "direction": "descending"}]
+                )
+                
+                rows_notion = []
+                for p in resp_notion.get("results", []):
+                    # Extract Props using helper or manual
+                    # Mapping: "Titre" -> Taxon, "Date", "Repère" -> Place, "Mycologue"
+                    props = p["properties"]
+                    
+                    # 1. Taxon (Title)
+                    taxon = "Inconnu"
+                    if "Titre" in props and props["Titre"]["title"]:
+                        taxon = props["Titre"]["title"][0]["text"]["content"]
+                    
+                    # 2. Date
+                    date_obs = "Inconnue"
+                    if "Date" in props and props["Date"]["date"]:
+                        date_obs = props["Date"]["date"]["start"]
+                    
+                    # 3. Place / Repère
+                    place = "Inconnu"
+                    if "Repère" in props and props["Repère"]["rich_text"]:
+                         place = props["Repère"]["rich_text"][0]["text"]["content"]
+                    
+                    # 4. Mycologue
+                    user = ""
+                    if "Mycologue" in props and props["Mycologue"]["select"]:
+                        user = props["Mycologue"]["select"]["name"]
+                        
+                    # 5. ID (Notion ID) + iNat ID ?? 
+                    # iNat ID is in "URL Inaturalist", need to parse or just use Notion ID for fallback
+                    notion_id = p["id"]
+                    
+                    # 6. Page URL (Crucial for QR)
+                    page_url = p["url"] # Standard Notion Page URL (https://www.notion.so/...)
+                    
+                    rows_notion.append({
+                        "id": notion_id, # Used for key
+                        "Taxon": taxon,
+                        "Date": date_obs,
+                        "Lieu": place,
+                        "Mycologue": user,
+                        "custom_url": page_url # Passed to labels.py
+                    })
+                
+                if rows_notion:
+                    df_notion = pd.DataFrame(rows_notion)
+                    # Add Selection Column
+                    df_notion.insert(0, "Imprimer", False)
+                    
+                    st.write(f"**{len(rows_notion)} dernières entrées trouvées.**")
+                    
+                    # Data Editor for Selection
+                    edited_df = st.data_editor(
+                        df_notion,
+                        column_config={
+                            "Imprimer": st.column_config.CheckboxColumn("🖨️", help="Cochez pour générer une étiquette", default=False),
+                            "custom_url": st.column_config.LinkColumn("Lien Notion"),
+                            "id": None # Hide ID
+                        },
+                        key="notion_editor",
+                        hide_index=True,
+                        use_container_width=True,
+                        disabled=["Taxon", "Date", "Lieu", "Mycologue", "custom_url"]
+                    )
+                    
+                    # Process Selection
+                    selected_rows = edited_df[edited_df["Imprimer"]]
+                    
+                    if not selected_rows.empty:
+                        st.divider()
+                        st.markdown("#### 🖨️ Impression")
+                        
+                        # Convert back to list of dicts for labels.py
+                        # We need to adapt keys slightly if labels.py expects 'time_observed_at' etc.
+                        # labels.py uses: taxon.name, time_observed_at/observed_on_string, place_guess, user.name, id, custom_url
+                        
+                        obs_for_labels = []
+                        for idx, row in selected_rows.iterrows():
+                             # Map row data to structure expected by labels.py
+                             obs = {
+                                 "id": row["id"],
+                                 "taxon": {"name": row["Taxon"]},
+                                 "observed_on_string": row["Date"],
+                                 "place_guess": row["Lieu"],
+                                 "user": {"name": row["Mycologue"]},
+                                 "custom_url": row["custom_url"]
+                             }
+                             obs_for_labels.append(obs)
+                             
+                        c_gen_1, c_gen_2 = st.columns(2)
+                        n_title = c_gen_1.text_input("Titre Étiquette", value="Fongarium (Notion)", key="notion_lbl_title")
+                        
+                        if st.button(f"Générer PDF ({len(obs_for_labels)})", type="primary", key="btn_notion_pdf"):
+                            try:
+                                opts = {"title": n_title, "include_coords": False} # Coords hard to parse from simplified Notion string?
+                                # Actually user might want coords. Notion "Latitude" / "Longitude" columns existing?
+                                # If so, we could extract them. For now, simple.
+                                
+                                pdf_bytes = generate_label_pdf(obs_for_labels, opts)
+                                st.session_state['notion_pdf'] = pdf_bytes
+                                st.success("PDF prêt !")
+                            except Exception as ex:
+                                st.error(f"Erreur PDF: {ex}")
+                        
+                        if 'notion_pdf' in st.session_state:
+                             st.download_button("📥 Télécharger", st.session_state['notion_pdf'], "etiquettes_notion.pdf", "application/pdf")
+
+                else:
+                    st.info("Aucune entrée trouvée.")
+                    
+            except Exception as e:
+                 st.error(f"Erreur Notion Load: {e}")
+        else:
+             st.warning("Veuillez configurer les secrets Notion.")
+
+
 
 with tab1:
     with st.container(border=True):
