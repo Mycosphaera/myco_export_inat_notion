@@ -692,6 +692,10 @@ if st.session_state.search_results:
                 if idx in df.index:
                     obj_id = int(str(df.at[idx, "ID"]).replace(",",""))
                     st.session_state.selection_states[obj_id] = new_val
+                    
+        # FORCE REMOUNT: Increment key version to clear editor's internal history
+        # This prevents "reverting" visual bugs by forcing the editor to rebuild strictly from 'df'
+        st.session_state.editor_key_version += 1
 
     response = st.data_editor(
         df,
