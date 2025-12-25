@@ -72,17 +72,33 @@ def create_label_flowables(obs, styles, options):
     taxon_para = Paragraph(f"<i>{taxon_name}</i>", style_italic)
     
     # Metadata
-    meta_text = f"""
-    <b>Date:</b> {date_str}<br/>
-    <b>Loc:</b> {place}<br/>
-    <b>Det:</b> {collector}<br/>
-    <b>ID:</b> {obs['id']}
-    """
+    # Standard Fields
+    meta_lines = [
+        f"<b>Date:</b> {date_str}",
+        f"<b>Loc:</b> {place}",
+        f"<b>Det:</b> {collector}",
+        f"<b>ID:</b> {obs['id']}"
+    ]
+    
+    # Extra Fields (Notion)
+    if obs.get('fongarium_no'):
+        meta_lines.append(f"<b>No:</b> {obs['fongarium_no']}")
+        
+    if obs.get('project'):
+        meta_lines.append(f"<b>Prj:</b> {obs['project']}")
+        
+    if obs.get('habitat'):
+        meta_lines.append(f"<b>Hab:</b> {obs['habitat']}")
+        
+    if obs.get('substrate'):
+        meta_lines.append(f"<b>Sub:</b> {obs['substrate']}")
+
     if options.get('include_coords'):
         loc = obs.get('location')
         if loc:
-             meta_text += f"<br/><b>GPS:</b> {loc}"
-             
+             meta_lines.append(f"<b>GPS:</b> {loc}")
+
+    meta_text = "<br/>".join(meta_lines)
     meta_para = Paragraph(meta_text, style_small)
     
     # Layout: Table with 2 columns (Text | QR)

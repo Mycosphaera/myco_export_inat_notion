@@ -317,6 +317,27 @@ with tab4:
                         user = ""
                         if myco_key in props: user = get_prop_text(props[myco_key])
                         
+                        # Extra Fields Extraction
+                        # 1. Project (Projet d'inventaire)
+                        project = ""
+                        if projet_key in props: project = get_prop_text(props[projet_key])
+                        
+                        # 2. Fongarium
+                        fongarium = ""
+                        if fong_col_name in props: fongarium = get_prop_text(props[fong_col_name])
+                        
+                        # 3. Habitat (Relation)
+                        raw_habitat = []
+                        hab_key = next((k for k in props if "habitat" in k.lower()), "Habitat")
+                        if hab_key in props and props[hab_key]["type"] == "relation":
+                            raw_habitat = [r["id"] for r in props[hab_key]["relation"]]
+                            
+                        # 4. Substrate (Relation)
+                        raw_substrate = []
+                        sub_key = next((k for k in props if "substra" in k.lower()), "Substrat")
+                        if sub_key in props and props[sub_key]["type"] == "relation":
+                             raw_substrate = [r["id"] for r in props[sub_key]["relation"]]
+
                         notion_id = p["id"]
                         page_url = p["url"]
                         
@@ -326,7 +347,11 @@ with tab4:
                             "Date": date_obs,
                             "Lieu": place,
                             "Mycologue": user,
-                            "custom_url": page_url
+                            "custom_url": page_url,
+                            "Projet": project,
+                            "Fongarium": fongarium,
+                            "raw_habitat": raw_habitat,
+                            "raw_substrate": raw_substrate
                         })
                 
                 if rows_notion:
@@ -358,22 +383,69 @@ with tab4:
                         st.markdown("#### 🖨️ Impression")
                         
                         obs_for_labels = []
-                        for idx, row in selected_rows.iterrows():
-                             obs = {
-                                 "id": row["id"],
-                                 "taxon": {"name": row["Taxon"]},
-                                 "observed_on_string": row["Date"],
-                                 "place_guess": row["Lieu"],
-                                 "user": {"name": row["Mycologue"]},
-                                 "custom_url": row["custom_url"]
-                             }
-                             obs_for_labels.append(obs)
-                             
+                        
+                        # Cache for Relation Names to avoid repeated API calls
+                        relation_cache = {}
+                        
+                        def get_relation_name(page_id):
+                            if not page_id: return ""
+                            if page_id in relation_cache: return relation_cache[page_id]
+                            
+                            try:
+                                r_url = f"https://api.notion.com/v1/pages/{page_id}"
+                                r_resp = requests.get(r_url, headers=headers)
+                                if r_resp.status_code == 200:
+                                    r_props = r_resp.json().get("properties", {})
+                                    # Try to find Name/Title
+                                    # Usually standard title property
+                                    for k, v in r_props.items():
+                                        if v["type"] == "title" and v["title"]:
+                                            name = v["title"][0]["text"]["content"]
+                                            relation_cache[page_id] = name
+                                            return name
+                                return "Inconnu"
+                            except:
+                                return "Erreur"
+
+                        # Progress bar for resolving relations if many selected
+                        resolve_prog = st.empty()
+                        
                         c_gen_1, c_gen_2 = st.columns(2)
                         n_title = c_gen_1.text_input("Titre Étiquette", value="Fongarium (Notion)", key="notion_lbl_title_req")
                         
-                        if st.button(f"Générer PDF ({len(obs_for_labels)})", type="primary", key="btn_notion_pdf_req"):
+                        if st.button(f"Générer PDF ({len(selected_rows)})", type="primary", key="btn_notion_pdf_req"):
                             try:
+                                with st.spinner("Préparation des données (Résolution des relations Notion)..."):
+                                    for idx, row in selected_rows.iterrows():
+                                         # Resolve Relations here
+                                         hab_name = ""
+                                         if row.get("raw_habitat"):
+                                             # Handle single or multiple? Take first.
+                                             # row["raw_habitat"] should be list of IDs
+                                             ids = row["raw_habitat"]
+                                             if isinstance(ids, list) and ids:
+                                                 hab_name = get_relation_name(ids[0])
+                                         
+                                         sub_name = ""
+                                         if row.get("raw_substrate"):
+                                             ids = row["raw_substrate"]
+                                             if isinstance(ids, list) and ids:
+                                                 sub_name = get_relation_name(ids[0])
+
+                                         obs = {
+                                             "id": row["id"],
+                                             "taxon": {"name": row["Taxon"]},
+                                             "observed_on_string": row["Date"],
+                                             "place_guess": row["Lieu"],
+                                             "user": {"name": row["Mycologue"]},
+                                             "custom_url": row["custom_url"],
+                                             "project": row.get("Projet", ""),
+                                             "fongarium_no": row.get("Fongarium", ""),
+                                             "habitat": hab_name,
+                                             "substrate": sub_name
+                                         }
+                                         obs_for_labels.append(obs)
+                                
                                 opts = {"title": n_title, "include_coords": False}
                                 pdf_bytes = generate_label_pdf(obs_for_labels, opts)
                                 st.session_state['notion_pdf'] = pdf_bytes
