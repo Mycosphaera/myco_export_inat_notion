@@ -222,12 +222,37 @@ with tab4:
                 f_col4, f_col5 = st.columns(2)
                 
                 # iNat ID
-                inat_col_name = next((k for k in props_schema if "inat" in k.lower() or "url" in k.lower()), "URL Inaturalist")
+                # Prioritize "URL Inaturalist", then "No Inat.", then "INAT"
+                inat_candidates = ["URL Inaturalist", "No Inat.", "INAT", "No Inat"]
+                inat_col_name = "URL Inaturalist"
+                # Find first existing candidate
+                found_inat = False
+                for cand in inat_candidates:
+                    if cand in props_schema:
+                        inat_col_name = cand
+                        found_inat = True
+                        break
+                if not found_inat:
+                     # Fallback fuzzy
+                     inat_col_name = next((k for k, v in props_schema.items() if ("inat" in k.lower() or "url" in k.lower()) and v["type"] != "checkbox"), "URL Inaturalist")
+                
                 sel_inat_id = f_col4.text_input(f"ID iNaturalist (via {inat_col_name})", placeholder="ex: 123456")
                 
                 # Fongarium
-                fong_col_name = next((k for k in props_schema if "fongarium" in k.lower() or "no" in k.lower() and "fong" in k.lower()), "No° fongarium")
-                sel_fong = f_col5.text_input(f"No° Fongarium (via {fong_col_name})", placeholder="ex: MYCO-2024...")
+                # Prioritize "No° fongarium", "No fongarium", "Numéro fongarium"
+                fong_candidates = ["No° fongarium", "No fongarium", "Numéro fongarium", "Code fongarium"]
+                fong_col_name = "No° fongarium"
+                found_fong = False
+                for cand in fong_candidates:
+                    if cand in props_schema:
+                        fong_col_name = cand
+                        found_fong = True
+                        break
+                if not found_fong:
+                     # Fallback, explicitly avoiding "checkbox" types (like 'Fongarium')
+                     fong_col_name = next((k for k,v in props_schema.items() if "fongarium" in k.lower() and v["type"] not in ["checkbox", "formula"]), "No° fongarium")
+                
+                sel_fong = f_col5.text_input(f"No° Fongarium (via {fong_col_name})", placeholder="ex: MRD0150...")
                 
                 # 3. Build Filter Payload
                 notion_filter = {"and": []}
