@@ -1047,12 +1047,44 @@ if st.session_state.search_results:
                         else:
                             fmt_db_id = clean_id_imp
                             
-                        notion.pages.create(
+                        new_page = notion.pages.create(
                             parent={"database_id": fmt_db_id, "type": "database_id"}, # Explicit type as requested
                             properties=props,
                             children=children,
                             cover={"external": {"url": cover_url}} if cover_url else None
                         )
+                        
+                        # --- QR CODE GENERATION ---
+                        # 1. Get New Page URL
+                        page_url = new_page.get('url')
+                        page_id = new_page.get('id')
+                        
+                        if page_url and page_id:
+                            # 2. Generate Public QR URL (Notion needs an external URL for Files)
+                            # Using qrserver.com API which is standard
+                            qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={page_url}"
+                            
+                            # 3. Update "Code QR" property
+                            # We wrap this in a separate try/except so it doesn't fail the whole import if column is missing
+                            try:
+                                notion.pages.update(
+                                    page_id=page_id,
+                                    properties={
+                                        "Code QR": {
+                                            "files": [
+                                                {
+                                                    "name": "notion_qr.png",
+                                                    "type": "external",
+                                                    "external": {"url": qr_api_url}
+                                                }
+                                            ]
+                                        }
+                                    }
+                                )
+                            except Exception as e_qr:
+                                # Often happens if "Code QR" property doesn't exist or is wrong type
+                                st.warning(f"⚠️ QR Code non ajouté pour {sci_name} (Vérifiez qu'une colonne 'Code QR' de type 'Fichiers' existe) : {e_qr}")
+
                     except Exception as e:
                         st.warning(f"Erreur Notion sur {sci_name}: {e}")
                         # Provide hint on common error
