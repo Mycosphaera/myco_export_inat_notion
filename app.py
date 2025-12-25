@@ -397,15 +397,16 @@ with tab1:
             run_search = True
 
 with tab2:
-    ids_input = st.text_area("IDs (séparés par virgules ou sauts de ligne)")
-    if st.button("🔎 Rechercher IDs", type="primary"):
-        # Replace newlines with commas, then split
-        normalized_input = ids_input.replace('\n', ',')
-        id_list = [x.strip() for x in normalized_input.split(',') if x.strip().isdigit()]
-        if id_list:
-            params = {"id": id_list}
-            fetch_limit = len(id_list) # Use list length as limit
-            run_search = True
+    with st.container(border=True):
+        ids_input = st.text_area("IDs (séparés par virgules ou sauts de ligne)")
+        if st.button("🔎 Rechercher IDs", type="primary"):
+            # Replace newlines with commas, then split
+            normalized_input = ids_input.replace('\n', ',')
+            id_list = [x.strip() for x in normalized_input.split(',') if x.strip().isdigit()]
+            if id_list:
+                params = {"id": id_list}
+                fetch_limit = len(id_list) # Use list length as limit
+                run_search = True
 
 # --- SEARCH EXECUTION ---
 if run_search:
