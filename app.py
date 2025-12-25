@@ -670,24 +670,42 @@ if st.session_state.search_results:
     # We'll use the version key only for programmatic RESET.
     editor_key = f"{base_key}_v{st.session_state.editor_key_version}"
     
+    # Callback to handle edits BEFORE rerun
+    def on_editor_change():
+        # Get the list of changes from the widget state
+        state = st.session_state.get(editor_key)
+        if not state: return
+        
+        # Edited rows is a dict: {row_index: {'Import': True/False, ...}}
+        edited_rows = state.get("edited_rows", {})
+        
+        # We need to map row_index back to Observation ID
+        # The 'df' variable in global scope (from previous run) matches this index
+        # BUT we must be careful. The DataFrame 'df' here is the one used to INITIALIZE the editor.
+        # It corresponds to 'st.session_state.cached_display_df' filtered/sorted same way?
+        # Yes, 'df' created above at line 635 is what matches these indices.
+        
+        for idx, changes in edited_rows.items():
+            if "Import" in changes:
+                new_val = changes["Import"]
+                # Get ID from the dataframe using the index
+                if idx in df.index:
+                    obj_id = int(str(df.at[idx, "ID"]).replace(",",""))
+                    st.session_state.selection_states[obj_id] = new_val
+
     response = st.data_editor(
         df,
         column_config=column_config,
         hide_index=True,
         use_container_width=True,
         disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "Description", "GPS", "URL iNat", "Photo URL", "Image"],
-        key=editor_key
+        key=editor_key,
+        on_change=on_editor_change
     )
     
-    # Logic: Detect Changes
-    if response is not None and not response.empty:
-         for index, row in response.iterrows():
-             try:
-                 o_id = int(str(row['ID']).replace(",",""))
-                 is_checked = row['Import']
-                 if st.session_state.selection_states.get(o_id) != is_checked:
-                     st.session_state.selection_states[o_id] = is_checked
-             except ValueError: pass
+    # Post-processing logic removed as it's handled by callback
+    # Just need to ensure selections persist
+
 
     # Count Checked
     current_ids = {obs['id'] for obs in st.session_state.search_results}
