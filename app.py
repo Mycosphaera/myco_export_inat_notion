@@ -198,26 +198,31 @@ with tab1:
         # Options for pills
         pill_options = list(ICONIC_TAXA.keys())
         
-        # Default index (Fungi)
-        default_index = pill_options.index("Champignons 🍄")
+        # Default to Fungi
+        default_selection = ["Champignons 🍄"]
         
-        # Selection
-        selected_icon = st.pills(
+        # Selection (Multi)
+        selected_icons = st.pills(
             "Groupe",
             options=pill_options,
-            default="Champignons 🍄",
-            selection_mode="single",
+            default=default_selection,
+            selection_mode="multi",
             label_visibility="collapsed",
             key="taxon_pills"
         )
         
-        # Determine Base ID from Pill
-        taxon_id = ICONIC_TAXA.get(selected_icon, "47170") # Default fallback Fungi
-        
-        # Handle "Unknown" special case if needed (API param specific)
-        if taxon_id == "unknown":
-            taxon_id = None # Or specific logic for unknown
+        # Determine Base ID from Pills
+        taxon_id = None
+        if selected_icons:
+            ids = []
+            for icon in selected_icons:
+                tid = ICONIC_TAXA.get(icon)
+                if tid and tid != "unknown":
+                    ids.append(str(tid))
             
+            if ids:
+                taxon_id = ",".join(ids) # iNat API accepts comma separated IDs
+        
         # 2. OPTIONAL: Specific Text Override
         with st.expander("🔍 Recherche précise (Espèce/Genre)"):
             taxon_query = st.text_input("Nom scientifique ou commun", placeholder="ex: Canis lupus")
@@ -234,8 +239,10 @@ with tab1:
                         st.warning("Aucun taxon trouvé.")
                 except Exception as e:
                     st.error(f"Erreur recherche: {e}")
+            elif not taxon_id:
+                st.caption("Filtre actuel : Aucun (Tout afficher)")
             else:
-                st.caption(f"Filtre actuel : {selected_icon} (ID: {taxon_id})")
+                st.caption(f"Filtre actuel : {selected_icons} (IDs: {taxon_id})")
 
     with col_filters_2:
         st.markdown("**🌍 Lieu**")
