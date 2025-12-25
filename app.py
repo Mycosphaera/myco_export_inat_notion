@@ -159,29 +159,46 @@ with tab4:
         if c_notion_cols[1].button("🔄 Actualiser Notion", type="primary"):
             st.rerun()
 
-        # Fetch from Notion (Limit to last 100 for perf? or Date filter?)
-        # Let's simple query last 50 created.
+        if st.checkbox("🐞 Debug Notion"):
+             st.write(f"Notion Lib: {notion}")
+             st.write(f"Methods: {dir(notion.databases)}")
+             try:
+                 dbg_schema = notion.databases.retrieve(DATABASE_ID)
+                 st.json(dbg_schema["properties"])
+             except Exception as e:
+                 st.error(f"Debug Error: {e}")
+
+        # Fetch from Notion using direct HTTP to avoid library version issues
         if NOTION_TOKEN and DATABASE_ID:
+            import requests # Ensure requests is imported
+            
+            headers = {
+                "Authorization": f"Bearer {NOTION_TOKEN}",
+                "Notion-Version": "2022-06-28", # Stable version
+                "Content-Type": "application/json"
+            }
+            
             try:
-                # 1. Fetch Schema for Options
-                db_info = notion.databases.retrieve(database_id=DATABASE_ID)
-                props_schema = db_info.get("properties", {})
+                # 1. Fetch Schema (GET /v1/databases/{id})
+                api_url_db = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
+                resp_schema = requests.get(api_url_db, headers=headers)
                 
+                if resp_schema.status_code != 200:
+                    st.error(f"Notion Error {resp_schema.status_code}: {resp_schema.text}")
+                    props_schema = {}
+                else:
+                    db_info = resp_schema.json()
+                    props_schema = db_info.get("properties", {})
+
                 # Extract Select Options
                 myco_options = []
-                if "Mycologue" in props_schema and props_schema["Mycologue"]["type"] == "select":
-                    myco_options = [opt["name"] for opt in props_schema["Mycologue"]["select"]["options"]]
+                # Robust property finding
+                myco_key = next((k for k in props_schema if "mycologue" in k.lower()), "Mycologue")
+                if myco_key in props_schema and props_schema[myco_key]["type"] == "select":
+                    myco_options = [opt["name"] for opt in props_schema[myco_key]["select"]["options"]]
                 
                 projet_options = []
-                # Guessing exact name "Projet d'inventaire" or similar?
-                # Let's look for "Projet", "Inventaire" if exact match fails
-                projet_key = "Projet d'inventaire"
-                if projet_key not in props_schema:
-                    # Fuzzy find?
-                    for k in props_schema.keys():
-                        if "projet" in k.lower():
-                            projet_key = k
-                            break
+                projet_key = next((k for k in props_schema if "projet" in k.lower() or "inventaire" in k.lower()), "Projet d'inventaire")
                 
                 if projet_key in props_schema and props_schema[projet_key]["type"] == "select":
                      projet_options = [opt["name"] for opt in props_schema[projet_key]["select"]["options"]]
@@ -191,63 +208,48 @@ with tab4:
                     f_col1, f_col2, f_col3 = st.columns(3)
                     
                     # Mycologue
-                    sel_myco = f_col1.selectbox("Mycologue", ["Tous"] + myco_options)
+                    sel_myco = f_col1.selectbox(f"Mycologue ({myco_key})", ["Tous"] + myco_options)
                     
                     # Projet
                     if projet_options:
-                        sel_proj = f_col2.selectbox("Projet d'inventaire", ["Tous"] + projet_options)
+                        sel_proj = f_col2.selectbox(f"Projet ({projet_key})", ["Tous"] + projet_options)
                     else:
-                        sel_proj = f_col2.text_input("Projet d'inventaire", placeholder="Nom du projet")
+                        sel_proj = f_col2.text_input(f"Projet ({projet_key})", placeholder="Nom du projet")
                         
                     # Date
                     sel_date = f_col3.date_input("Date (Exacte)", value=None)
                 
                 f_col4, f_col5 = st.columns(2)
-                # iNat ID
-                # Try to map column Name
-                inat_col_name = "URL Inaturalist"
-                if "INAT" in props_schema: inat_col_name = "INAT" # User hint
                 
+                # iNat ID
+                inat_col_name = next((k for k in props_schema if "inat" in k.lower() or "url" in k.lower()), "URL Inaturalist")
                 sel_inat_id = f_col4.text_input(f"ID iNaturalist (via {inat_col_name})", placeholder="ex: 123456")
                 
                 # Fongarium
-                fong_col_name = "No° fongarium"
-                # Check exist
-                if fong_col_name not in props_schema:
-                     # Check "No" or "Fongarium"
-                     for k in props_schema.keys():
-                         if "fongarium" in k.lower():
-                             fong_col_name = k
-                             break
-                sel_fong = f_col5.text_input("No° Fongarium", placeholder="ex: MYCO-2024...")
+                fong_col_name = next((k for k in props_schema if "fongarium" in k.lower() or "no" in k.lower() and "fong" in k.lower()), "No° fongarium")
+                sel_fong = f_col5.text_input(f"No° Fongarium (via {fong_col_name})", placeholder="ex: MYCO-2024...")
                 
                 # 3. Build Filter Payload
                 notion_filter = {"and": []}
                 
                 if sel_myco != "Tous":
-                    notion_filter["and"].append({"property": "Mycologue", "select": {"equals": sel_myco}})
+                    notion_filter["and"].append({"property": myco_key, "select": {"equals": sel_myco}})
                 
                 if sel_proj and sel_proj != "Tous":
                     if projet_options:
-                         # It was a select
                          notion_filter["and"].append({"property": projet_key, "select": {"equals": sel_proj}})
-                    else:
-                         # Text input
-                         # Assuming it might be a Select property we search by text, or a Text property? 
-                         # Safest is to try "rich_text" contains if it's text, or... 
-                         # If we don't know type, it's risky. But usually "Projet" is Select. 
-                         # If options were empty, maybe it's text.
-                         if projet_key in props_schema and props_schema[projet_key]["type"] == "select":
+                    elif projet_key in props_schema:
+                         # Fallback if text
+                         p_type = props_schema[projet_key]["type"]
+                         if p_type == "select":
                               notion_filter["and"].append({"property": projet_key, "select": {"equals": sel_proj}})
-                         else:
+                         elif p_type == "rich_text":
                               notion_filter["and"].append({"property": projet_key, "rich_text": {"contains": sel_proj}})
 
                 if sel_date:
                     notion_filter["and"].append({"property": "Date", "date": {"equals": sel_date.isoformat()}})
                 
                 if sel_inat_id:
-                     # If URL column, implies 'contains' ID? Or if pure ID column (number/text).
-                     # "URL Inaturalist" is type 'url'. 'url' filter supports 'contains'.
                      type_inat = props_schema.get(inat_col_name, {}).get("type", "url")
                      if type_inat == "url":
                           notion_filter["and"].append({"property": inat_col_name, "url": {"contains": sel_inat_id}})
@@ -260,9 +262,8 @@ with tab4:
                     # Usually Rich Text
                     notion_filter["and"].append({"property": fong_col_name, "rich_text": {"contains": sel_fong}})
 
-                # If no filters, keep "and": [] -> Notion accepts this? No, might error.
+                # Payload
                 query_payload = {
-                    "database_id": DATABASE_ID,
                     "page_size": 50,
                     "sorts": [{"timestamp": "created_time", "direction": "descending"}]
                 }
@@ -270,50 +271,63 @@ with tab4:
                 if notion_filter["and"]:
                      query_payload["filter"] = notion_filter
                 
-                # Query Notion
-                resp_notion = notion.databases.query(**query_payload)
+                # Query Notion (POST /v1/databases/{id}/query)
+                api_url_query = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+                resp_query = requests.post(api_url_query, headers=headers, json=query_payload)
                 
                 rows_notion = []
-                for p in resp_notion.get("results", []):
-                    # Extract Props using helper or manual
-                    # Mapping: "Titre" -> Taxon, "Date", "Repère" -> Place, "Mycologue"
-                    props = p["properties"]
+                if resp_query.status_code != 200:
+                     st.error(f"Erreur Query {resp_query.status_code}: {resp_query.text}")
+                else:
+                    results = resp_query.json().get("results", [])
                     
-                    # 1. Taxon (Title)
-                    taxon = "Inconnu"
-                    if "Titre" in props and props["Titre"]["title"]:
-                        taxon = props["Titre"]["title"][0]["text"]["content"]
-                    
-                    # 2. Date
-                    date_obs = "Inconnue"
-                    if "Date" in props and props["Date"]["date"]:
-                        date_obs = props["Date"]["date"]["start"]
-                    
-                    # 3. Place / Repère
-                    place = "Inconnu"
-                    if "Repère" in props and props["Repère"]["rich_text"]:
-                         place = props["Repère"]["rich_text"][0]["text"]["content"]
-                    
-                    # 4. Mycologue
-                    user = ""
-                    if "Mycologue" in props and props["Mycologue"]["select"]:
-                        user = props["Mycologue"]["select"]["name"]
+                    for p in results:
+                        props = p["properties"]
                         
-                    # 5. ID (Notion ID) + iNat ID ?? 
-                    # iNat ID is in "URL Inaturalist", need to parse or just use Notion ID for fallback
-                    notion_id = p["id"]
-                    
-                    # 6. Page URL (Crucial for QR)
-                    page_url = p["url"] # Standard Notion Page URL (https://www.notion.so/...)
-                    
-                    rows_notion.append({
-                        "id": notion_id, # Used for key
-                        "Taxon": taxon,
-                        "Date": date_obs,
-                        "Lieu": place,
-                        "Mycologue": user,
-                        "custom_url": page_url # Passed to labels.py
-                    })
+                        # Helpers to extract text safely
+                        def get_prop_text(p_dict):
+                            if not p_dict: return ""
+                            ptype = p_dict["type"]
+                            if ptype == "title" and p_dict["title"]:
+                                return p_dict["title"][0]["text"]["content"]
+                            if ptype == "rich_text" and p_dict["rich_text"]:
+                                return p_dict["rich_text"][0]["text"]["content"]
+                            if ptype == "select" and p_dict["select"]:
+                                return p_dict["select"]["name"]
+                            if ptype == "date" and p_dict["date"]:
+                                return p_dict["date"]["start"]
+                            if ptype == "url":
+                                return p_dict["url"]
+                            return ""
+
+                        # Mapping based on fuzzy keys found earlier + Standard "Date"
+                        taxon = "Inconnu"
+                        # Find Title Prop
+                        title_key = next((k for k,v in props.items() if v["type"] == "title"), "Titre")
+                        if title_key in props: taxon = get_prop_text(props[title_key]) or "Sans Titre"
+                        
+                        date_obs = "Inconnue"
+                        if "Date" in props: date_obs = get_prop_text(props["Date"])
+                        
+                        place = "Inconnu"
+                        # Look for "Repère" or "Lieu"
+                        place_key = next((k for k in props if "repère" in k.lower() or "lieu" in k.lower()), "Repère")
+                        if place_key in props: place = get_prop_text(props[place_key])
+                        
+                        user = ""
+                        if myco_key in props: user = get_prop_text(props[myco_key])
+                        
+                        notion_id = p["id"]
+                        page_url = p["url"]
+                        
+                        rows_notion.append({
+                            "id": notion_id,
+                            "Taxon": taxon,
+                            "Date": date_obs,
+                            "Lieu": place,
+                            "Mycologue": user,
+                            "custom_url": page_url
+                        })
                 
                 if rows_notion:
                     df_notion = pd.DataFrame(rows_notion)
@@ -330,7 +344,7 @@ with tab4:
                             "custom_url": st.column_config.LinkColumn("Lien Notion"),
                             "id": None # Hide ID
                         },
-                        key="notion_editor",
+                        key="notion_editor_req",
                         hide_index=True,
                         use_container_width=True,
                         disabled=["Taxon", "Date", "Lieu", "Mycologue", "custom_url"]
@@ -343,13 +357,8 @@ with tab4:
                         st.divider()
                         st.markdown("#### 🖨️ Impression")
                         
-                        # Convert back to list of dicts for labels.py
-                        # We need to adapt keys slightly if labels.py expects 'time_observed_at' etc.
-                        # labels.py uses: taxon.name, time_observed_at/observed_on_string, place_guess, user.name, id, custom_url
-                        
                         obs_for_labels = []
                         for idx, row in selected_rows.iterrows():
-                             # Map row data to structure expected by labels.py
                              obs = {
                                  "id": row["id"],
                                  "taxon": {"name": row["Taxon"]},
@@ -361,14 +370,11 @@ with tab4:
                              obs_for_labels.append(obs)
                              
                         c_gen_1, c_gen_2 = st.columns(2)
-                        n_title = c_gen_1.text_input("Titre Étiquette", value="Fongarium (Notion)", key="notion_lbl_title")
+                        n_title = c_gen_1.text_input("Titre Étiquette", value="Fongarium (Notion)", key="notion_lbl_title_req")
                         
-                        if st.button(f"Générer PDF ({len(obs_for_labels)})", type="primary", key="btn_notion_pdf"):
+                        if st.button(f"Générer PDF ({len(obs_for_labels)})", type="primary", key="btn_notion_pdf_req"):
                             try:
-                                opts = {"title": n_title, "include_coords": False} # Coords hard to parse from simplified Notion string?
-                                # Actually user might want coords. Notion "Latitude" / "Longitude" columns existing?
-                                # If so, we could extract them. For now, simple.
-                                
+                                opts = {"title": n_title, "include_coords": False}
                                 pdf_bytes = generate_label_pdf(obs_for_labels, opts)
                                 st.session_state['notion_pdf'] = pdf_bytes
                                 st.success("PDF prêt !")
@@ -379,7 +385,12 @@ with tab4:
                              st.download_button("📥 Télécharger", st.session_state['notion_pdf'], "etiquettes_notion.pdf", "application/pdf")
 
                 else:
-                    st.info("Aucune entrée trouvée.")
+                    if resp_query.status_code == 200:
+                        st.info("Aucun résultat pour cette recherche.")
+                    
+            except Exception as e:
+                 st.error(f"Erreur Notion Load: {e}")
+
                     
             except Exception as e:
                  st.error(f"Erreur Notion Load: {e}")
