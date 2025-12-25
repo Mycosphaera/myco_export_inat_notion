@@ -4,6 +4,7 @@ import requests
 from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_autocomplete
 from notion_client import Client
 from datetime import date, timedelta
+from labels import generate_label_pdf
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Importateur Myco-Notion", page_icon="🍄", layout="wide")
@@ -93,10 +94,60 @@ if NOTION_TOKEN:
     notion = Client(auth=NOTION_TOKEN, notion_version="2025-09-03")
 
 # --- INTERFACE ---
-tab1, tab2 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs"])
+tab1, tab2, tab3 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes"])
 params = {}
 run_search = False
 import_list = [] # Will hold IDs or Obs to import
+
+with tab3:
+    with st.container(border=True):
+        st.markdown("### 🏷️ Générateur d'étiquettes PDF")
+        
+        # Check if we have selected observations
+        # We need "visible_obs" accessible here, but currently it's computed later in the script (lines 550+).
+        # OR we rely on st.session_state.selection_states AND st.session_state.search_results.
+        
+        selected_ids = [oid for oid, is_sel in st.session_state.selection_states.items() if is_sel]
+        
+        if not st.session_state.search_results:
+             st.info("💡 Faites d'abord une recherche pour sélectionner des observations.")
+        elif not selected_ids:
+             st.warning("⚠️ Aucune observation sélectionnée. Cochez des cases dans l'onglet Résultats.")
+        else:
+             # Match IDs to actual Obs objects
+             # Optimization: Create a dict map
+             obs_map = {o['id']: o for o in st.session_state.search_results}
+             
+             # Filter only those present in search results (safety)
+             valid_ids = [oid for oid in selected_ids if oid in obs_map]
+             selected_obs_objects = [obs_map[oid] for oid in valid_ids]
+             
+             count = len(selected_obs_objects)
+             st.success(f"✅ {count} observation(s) prête(s) pour l'impression.")
+
+             with st.form("label_config"):
+                 c_lbl_1, c_lbl_2 = st.columns(2)
+                 title_input = c_lbl_1.text_input("Titre de l'étiquette", value="Fongarium Personnel")
+                 include_coords = c_lbl_2.checkbox("Inclure Coordonnées GPS", value=True)
+                 
+                 submitted = st.form_submit_button("Générer PDF 📄", type="primary")
+                 
+                 if submitted and selected_obs_objects:
+                      options = {
+                          "title": title_input,
+                          "include_coords": include_coords
+                      }
+                      try:
+                          pdf_data = generate_label_pdf(selected_obs_objects, options)
+                          st.balloons()
+                          st.download_button(
+                              label="📥 Télécharger le PDF",
+                              data=pdf_data,
+                              file_name="etiquettes_myco.pdf",
+                              mime="application/pdf"
+                          )
+                      except Exception as e:
+                          st.error(f"Erreur lors de la génération : {e}")
 
 with tab1:
     with st.container(border=True):

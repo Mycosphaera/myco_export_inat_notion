@@ -1,5 +1,9 @@
 streamlit>=1.42.0
 pandas
+pyinaturalist
 notion-client
-pyinaturalist>=0.14.0
+requests
+st-styled
+reportlab
+qrcode[pil]>=0.14.0
 st-styled
