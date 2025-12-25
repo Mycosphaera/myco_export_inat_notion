@@ -62,14 +62,17 @@ def create_label_flowables(obs, styles, options):
     style_normal = styles['Normal']
     style_italic = styles['Italic']
     style_small = styles['Small']
-    style_title = styles['LabelTitle']
+    style_title = styles['LabelTitle'] # Used for Taxon now
+    style_subtitle = styles['LabelSubtitle'] # Used for Collection Name
     
-    # Title (User Configured)
-    title_text = options.get('title', 'Herbarium Label')
-    title_para = Paragraph(f"<b>{title_text}</b>", style_title)
+    # 1. Main Title = Taxon Name (Bold Italic)
+    # User requested Title -> Species Name.
+    # Scientific names should be Italic. Let's make it Bold Italic for prominence.
+    title_para = Paragraph(f"<b><i>{taxon_name}</i></b>", style_title)
     
-    # Taxon
-    taxon_para = Paragraph(f"<i>{taxon_name}</i>", style_italic)
+    # 2. Subtitle = Collection Name (e.g. "Fongarium (Notion)")
+    collection_text = options.get('title', 'Herbarium Label')
+    subtitle_para = Paragraph(collection_text, style_subtitle)
     
     # Metadata
     # Standard Fields
@@ -106,7 +109,7 @@ def create_label_flowables(obs, styles, options):
     col_widths = [2.6*inch, 0.9*inch] 
     
     data = [[
-        [title_para, Spacer(1, 4), taxon_para, Spacer(1, 4), meta_para],
+        [title_para, subtitle_para, Spacer(1, 2), meta_para],
         [qr_img]
     ]]
     
@@ -118,9 +121,6 @@ def create_label_flowables(obs, styles, options):
         ('RIGHTPADDING', (0,0), (-1,-1), 2),
         ('TOPPADDING', (0,0), (-1,-1), 2),
         ('BOTTOMPADDING', (0,0), (-1,-1), 2),
-        ('Grid', (0,0), (-1,-1), 0.5, colors.black), # Inner grid (optional, maybe remove for cleaner look, but user wanted "labels")
-        # Actually, let's make the label itself have a border, but not the inner cells, or maybe just a layout table.
-        # Let's put a border around the whole table to define the label edge.
         ('BOX', (0,0), (-1,-1), 1, colors.black),
     ]))
     
@@ -139,7 +139,9 @@ def generate_label_pdf(observations, options):
     )
     
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name='LabelTitle', parent=styles['Normal'], fontSize=10, alignment=TA_CENTER, spaceAfter=2))
+    # Updated Styles for Hierarchy
+    styles.add(ParagraphStyle(name='LabelTitle', parent=styles['Normal'], fontSize=11, alignment=TA_LEFT, spaceAfter=1))
+    styles.add(ParagraphStyle(name='LabelSubtitle', parent=styles['Normal'], fontSize=8, alignment=TA_LEFT, textColor=colors.gray))
     styles.add(ParagraphStyle(name='Small', parent=styles['Normal'], fontSize=8, leading=9))
     
     # Flowables list
