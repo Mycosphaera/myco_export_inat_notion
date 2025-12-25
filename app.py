@@ -175,21 +175,67 @@ with tab1:
         # function will join st.session_state.selected_users
         
          # --- TAXON SEARCH ENGINE ---
-        taxon_query = st.text_input("Chercher un taxon (ex: Fungi)", placeholder="ex: Fungi")
-        taxon_id = "47169" # Default to Fungi
+        # --- TAXON SEARCH ENGINE ---
+        st.markdown("**🍄 Groupe Taxonomique**")
         
-        if taxon_query:
-            try:
-                taxa = get_taxa_autocomplete(q=taxon_query, per_page=10)
-                if taxa['results']:
-                    taxon_options = {f"{t['name']} ({t.get('preferred_common_name', 'No common name')}) - ID: {t['id']}": t['id'] for t in taxa['results']}
-                    selected_taxon_name = st.selectbox("🍄 Sélectionner le taxon :", options=taxon_options.keys())
-                    taxon_id = taxon_options[selected_taxon_name]
-                    st.success(f"Taxon: {taxon_id}")
-                else:
-                    st.warning("Aucun taxon trouvé.")
-            except Exception as e:
-                st.error(f"Erreur recherche taxon: {e}")
+        # 1. ICONIC TAXA DEFINITION (Maps to User Screenshot)
+        # ID Source: https://www.inaturalist.org/pages/api+reference#get-taxa
+        ICONIC_TAXA = {
+            "Oiseaux 🐦": 3,
+            "Amphibiens 🐸": 20978,
+            "Reptiles 🐍": 26036,
+            "Mammifères 🐀": 40151,
+            "Poissons 🐟": 47178, # Actinopterygii (Ray-finned fishes) - broadly "fish"
+            "Mollusques 🐌": 47115,
+            "Arachnides 🕷️": 47119,
+            "Insectes 🐞": 47158,
+            "Plantes 🌿": 47126,
+            "Champignons 🍄": 47170,
+            "Protozoaires 🦠": 47686,
+            "Inconnu ❓": "unknown" 
+        }
+        
+        # Options for pills
+        pill_options = list(ICONIC_TAXA.keys())
+        
+        # Default index (Fungi)
+        default_index = pill_options.index("Champignons 🍄")
+        
+        # Selection
+        selected_icon = st.pills(
+            "Groupe",
+            options=pill_options,
+            default="Champignons 🍄",
+            selection_mode="single",
+            label_visibility="collapsed",
+            key="taxon_pills"
+        )
+        
+        # Determine Base ID from Pill
+        taxon_id = ICONIC_TAXA.get(selected_icon, "47170") # Default fallback Fungi
+        
+        # Handle "Unknown" special case if needed (API param specific)
+        if taxon_id == "unknown":
+            taxon_id = None # Or specific logic for unknown
+            
+        # 2. OPTIONAL: Specific Text Override
+        with st.expander("🔍 Recherche précise (Espèce/Genre)"):
+            taxon_query = st.text_input("Nom scientifique ou commun", placeholder="ex: Canis lupus")
+            if taxon_query:
+                try:
+                    taxa = get_taxa_autocomplete(q=taxon_query, per_page=10)
+                    if taxa['results']:
+                        taxon_options = {f"{t['name']} ({t.get('preferred_common_name', 'No common name')})": t['id'] for t in taxa['results']}
+                        selected_taxon_name = st.selectbox("Sélectionner:", options=taxon_options.keys())
+                        # OVERRIDE Pill ID
+                        taxon_id = taxon_options[selected_taxon_name]
+                        st.success(f"Filtre actif : {selected_taxon_name} (ID: {taxon_id})")
+                    else:
+                        st.warning("Aucun taxon trouvé.")
+                except Exception as e:
+                    st.error(f"Erreur recherche: {e}")
+            else:
+                st.caption(f"Filtre actuel : {selected_icon} (ID: {taxon_id})")
 
     with col_filters_2:
         st.markdown("**🌍 Lieu**")
