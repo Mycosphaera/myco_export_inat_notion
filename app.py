@@ -256,10 +256,11 @@ def count_user_notion_obs(token, db_id, target_user):
 @st.cache_data(ttl=60, show_spinner=False)
 def get_last_fongarium_number(token, db_id, target_user, prefix):
     """
-    Récupère le dernier numéro de fongarium attribué pour un utilisateur donné
-    en filtrant par préfixe et en triant par ordre décroissant.
+    Récupère le dernier numéro de fongarium attribué pour un utilisateur donné.
+    Ignore les codes temporaires (XXXX).
+    Retourne (dernier_code, code_suivant_suggéré).
     """
-    if not token or not db_id or not target_user or not prefix: return None
+    if not token or not db_id or not target_user or not prefix: return None, None
 
     url = f"https://api.notion.com/v1/databases/{db_id}/query"
     headers = {
@@ -268,12 +269,6 @@ def get_last_fongarium_number(token, db_id, target_user, prefix):
         "Content-Type": "application/json"
     }
 
-    # On cherche la colonne qui contient "No" ou "fongarium"
-    # Note: On suppose ici que la colonne s'appelle "No° fongarium" ou similaire.
-    # Pour le tri, on a besoin du nom EXACT de la propriété.
-    # Idéalement, on devrait le dynamiser, mais pour l'instant on tente "No° fongarium"
-    # Si ça échoue, on logera.
-    
     # Payload
     payload = {
         "filter": {
@@ -295,38 +290,55 @@ def get_last_fongarium_number(token, db_id, target_user, prefix):
         "sorts": [
             {
                 "property": "No° fongarium",
-                "direction": "descending"
+                "direction": "descending" # On veut le plus grand
             }
         ],
-        "page_size": 1
+        "page_size": 30 # On en prend 30 pour être sûr de sauter les XXXX
     }
+
+    import re
+    # Regex strict : Prefix + Digits only (e.g. MRD0015)
+    # Case insensitive match for prefix, but digits at end
+    regex_pattern = re.compile(f"^{re.escape(prefix)}\d+$", re.IGNORECASE)
 
     try:
         resp = requests.post(url, headers=headers, json=payload)
         if resp.status_code != 200:
-            # Fallback: Maybe column name is different? 
-            # Try without the specific column filter/sort if failed? No, sort is essential.
             print(f"Sort Error: {resp.text}")
-            return None
+            return None, None
             
         data = resp.json()
         results = data.get("results", [])
         
-        if results:
-            props = results[0]["properties"]
-            # Retrieve content regardless of specific key casing if possible, but structure dictates key access
-            # We try standard keys
+        for r in results:
+            props = r["properties"]
             fong_val = constants_extract_text(props.get("No° fongarium", {}))
             if not fong_val:
-                 # Try "No fongarium"
                  fong_val = constants_extract_text(props.get("No fongarium", {}))
-            return fong_val
+            
+            if fong_val and regex_pattern.match(fong_val.strip()):
+                # Found a match!
+                last_val = fong_val.strip()
+                
+                # Calculate Next
+                try:
+                    # Extract number part
+                    # Remove prefix (case insensitive replace)
+                    num_part_str = last_val[len(prefix):]
+                    num_val = int(num_part_str)
+                    next_num = num_val + 1
+                    # Format with same padding? len(num_part_str)
+                    next_val_str = f"{next_num:0{len(num_part_str)}d}"
+                    next_code = f"{prefix}{next_val_str}"
+                    return last_val, next_code
+                except:
+                    return last_val, None
             
     except Exception as e:
         print(f"Fongarium Fetch Error: {e}")
-        return None
+        return None, None
         
-    return None
+    return None, None
 
 def constants_extract_text(prop_obj):
     # Helper to extract text from Rich Text property safely
@@ -498,9 +510,10 @@ elif nav_mode == "📊 Tableau de Bord":
              prefix = user_info.get("fongarium_prefix")
              
              if prefix:
-                 last_fong = get_last_fongarium_number(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
+                 last_fong, next_fong = get_last_fongarium_number(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
                  if last_fong:
-                     st.metric(label="Fongarium (Dernier)", value=last_fong, delta="Suivant: +1")
+                     delta_msg = f"Suivant: {next_fong}" if next_fong else "Suivant: +1"
+                     st.metric(label="Fongarium (Dernier)", value=last_fong, delta=delta_msg)
                  else:
                      st.metric(label="Fongarium", value="Aucun", help=f"Aucune entrée trouvée avec le préfixe {prefix}")
              else:
