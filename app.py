@@ -1811,6 +1811,89 @@ if st.session_state.search_results:
             # Only enable if something is checked
             dup_disabled = total_checked == 0
             
+            # --- PRÉPARATION DE L'IMPORT (Preview & Fongarium) ---
+            st.markdown("### 🛠️ Préparation de l'import")
+            
+            preview_ids = [oid for oid, is_sel in st.session_state.selection_states.items() if is_sel and oid in current_ids]
+            
+            if not preview_ids:
+                st.info("Sélectionnez des observations ci-dessus pour préparer l'import.")
+            else:
+                # Use a state key to persist manual edits between reruns
+                # We need a stable hash key based on selection
+                current_prev_hash = tuple(sorted(list(preview_ids)))
+                
+                # Check if we need to initialize or rebuild the preview dataframe
+                if 'preview_df' not in st.session_state or st.session_state.get('preview_ids_hash') != current_prev_hash:
+                    p_data = []
+                    for obs in st.session_state.search_results:
+                        if obs['id'] in preview_ids:
+                             p_data.append({
+                                 "ID": str(obs['id']),
+                                 "Taxon": obs.get('taxon', {}).get('name') or "Inconnu",
+                                 "Collection": False,
+                                 "No° Fongarium": "" 
+                             })
+                    st.session_state.preview_df = pd.DataFrame(p_data)
+                    st.session_state.preview_ids_hash = current_prev_hash
+                
+                # --- MAGIC BUTTON (Auto-Fill) ---
+                col_magic, col_space = st.columns([1, 2])
+                if col_magic.button("🪄 Générer les numéros", help="Remplit automatiquement la colonne 'No° Fongarium' pour les lignes cochées 'Collection'"):
+                     user_info = st.session_state.get('user_info', {})
+                     prefix = user_info.get("fongarium_prefix")
+                     if not prefix: 
+                         st.error("Configurez votre préfixe dans 'Mon Profil' d'abord !")
+                     else:
+                        with st.spinner("Calcul de la suite..."):
+                             last_f, next_start = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
+                             
+                             if not next_start:
+                                 next_start = f"{prefix}0001"
+                                 st.warning(f"Aucun précédent trouvé. On commence à {next_start}.")
+                             
+                             df_p = st.session_state.preview_df
+                             
+                             # Extract number logic
+                             import re
+                             match = re.search(r"(\d+)$", next_start)
+                             if match:
+                                 current_num = int(match.group(1))
+                                 num_len = len(match.group(1))
+                                 current_prefix = next_start[:match.start()]
+                             else:
+                                 current_num = 1
+                                 num_len = 4
+                                 current_prefix = prefix
+
+                             processed_count = 0
+                             for idx, row in df_p.iterrows():
+                                 if row["Collection"]:
+                                     code = f"{current_prefix}{current_num:0{num_len}d}"
+                                     df_p.at[idx, "No° Fongarium"] = code
+                                     current_num += 1
+                                     processed_count += 1
+                             
+                             st.session_state.preview_df = df_p
+                             st.success(f"{processed_count} numéros générés !")
+                             st.rerun()
+
+                # Display Editor
+                edited_preview = st.data_editor(
+                     st.session_state.preview_df,
+                     key="fongarium_preview_editor",
+                     column_config={
+                         "ID": st.column_config.TextColumn("ID", disabled=True, width="small"),
+                         "Taxon": st.column_config.TextColumn("Taxon", disabled=True),
+                         "Collection": st.column_config.CheckboxColumn("En Collection ?", help="Cochez pour inclure dans la série", default=False),
+                         "No° Fongarium": st.column_config.TextColumn("No° Fongarium", help="Modifiable manuellement"),
+                     },
+                     hide_index=True,
+                     use_container_width=True
+                )
+            
+            st.divider()
+
             if col_dup.button("🕵️ Vérifier doublons", type="secondary", disabled=dup_disabled):
                 st.session_state.dup_msg = None
                 ids_to_check = [str(oid) for oid, is_sel in st.session_state.selection_states.items() if is_sel and oid in current_ids]
@@ -1963,6 +2046,16 @@ if st.session_state.search_results:
                 # OBS TO IMPORT
                 obs_to_import = ids_to_import # Already list of dicts
                 
+                # --- PREPARE FONGARIUM MAP ---
+                fongarium_map = {}
+                if 'preview_df' in st.session_state and not st.session_state.preview_df.empty:
+                     for idx, row in st.session_state.preview_df.iterrows():
+                         raw_code = str(row["No° Fongarium"]).strip()
+                         # We rely on string ID matching
+                         obs_id_str = str(row["ID"]).replace(",", "") # Safety
+                         if raw_code:
+                             fongarium_map[str(obs_id_str)] = raw_code
+
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
@@ -1991,6 +2084,9 @@ if st.session_state.search_results:
                                 extracted_tags.append(str(t))
                         tag_string = ", ".join(filter(None, extracted_tags))
                     
+                    # Fongarium Lookup
+                    fong_code = fongarium_map.get(str(obs['id']))
+
                     place_guess = obs.get('place_guess', '')
                     description = obs.get('description', '')
                     
@@ -2034,7 +2130,12 @@ if st.session_state.search_results:
                     # FIX: Renamed property as per user screenshot
                     if obs_url: props["URL Inaturalist"] = {"url": obs_url}
                     if first_photo_url: props["Photo Inat"] = {"url": first_photo_url}
-                    if tag_string: props["No° Fongarium"] = {"rich_text": [{"text": {"content": tag_string}}]}
+                    
+                    # Logic: Prioritize Fongarium Code if present, else fallback to Tags if used as such
+                    if fong_code:
+                         props["No° Fongarium"] = {"rich_text": [{"text": {"content": fong_code}}]}
+                    elif tag_string: 
+                         props["No° Fongarium"] = {"rich_text": [{"text": {"content": tag_string}}]}
                     if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
                     if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
                     if lat: props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lat)}}]}
