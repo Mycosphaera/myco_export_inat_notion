@@ -253,6 +253,95 @@ def count_user_notion_obs(token, db_id, target_user):
         
     return total_count
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_last_fongarium_number(token, db_id, target_user, prefix):
+    """
+    Récupère le dernier numéro de fongarium attribué pour un utilisateur donné
+    en filtrant par préfixe et en triant par ordre décroissant.
+    """
+    if not token or not db_id or not target_user or not prefix: return None
+
+    url = f"https://api.notion.com/v1/databases/{db_id}/query"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+
+    # On cherche la colonne qui contient "No" ou "fongarium"
+    # Note: On suppose ici que la colonne s'appelle "No° fongarium" ou similaire.
+    # Pour le tri, on a besoin du nom EXACT de la propriété.
+    # Idéalement, on devrait le dynamiser, mais pour l'instant on tente "No° fongarium"
+    # Si ça échoue, on logera.
+    
+    # Payload
+    payload = {
+        "filter": {
+            "and": [
+                {
+                    "property": "Mycologue",
+                    "select": {
+                        "equals": target_user
+                    }
+                },
+                {
+                    "property": "No° fongarium", # Nom colonne Notion
+                    "rich_text": {
+                        "starts_with": prefix
+                    }
+                }
+            ]
+        },
+        "sorts": [
+            {
+                "property": "No° fongarium",
+                "direction": "descending"
+            }
+        ],
+        "page_size": 1
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload)
+        if resp.status_code != 200:
+            # Fallback: Maybe column name is different? 
+            # Try without the specific column filter/sort if failed? No, sort is essential.
+            print(f"Sort Error: {resp.text}")
+            return None
+            
+        data = resp.json()
+        results = data.get("results", [])
+        
+        if results:
+            props = results[0]["properties"]
+            # Retrieve content regardless of specific key casing if possible, but structure dictates key access
+            # We try standard keys
+            fong_val = constants_extract_text(props.get("No° fongarium", {}))
+            if not fong_val:
+                 # Try "No fongarium"
+                 fong_val = constants_extract_text(props.get("No fongarium", {}))
+            return fong_val
+            
+    except Exception as e:
+        print(f"Fongarium Fetch Error: {e}")
+        return None
+        
+    return None
+
+def constants_extract_text(prop_obj):
+    # Helper to extract text from Rich Text property safely
+    if not prop_obj: return ""
+    rtype = prop_obj.get("type")
+    if rtype == "rich_text":
+        content = prop_obj.get("rich_text", [])
+        if content:
+            return content[0].get("text", {}).get("content", "")
+    elif rtype == "title":
+         content = prop_obj.get("title", [])
+         if content:
+            return content[0].get("text", {}).get("content", "")
+    return ""
+
 
 # --- STATE MANAGEMENT ---
 if 'search_results' not in st.session_state:
@@ -320,6 +409,7 @@ if nav_mode == "👤 Mon Profil":
         
         with col_p2:
             # New Fields (Optional, might error if cols missing)
+            new_prefix = st.text_input("Préfixe Fongarium", value=u_data.get("fongarium_prefix", ""), placeholder="ex: MRD", help="Identifiant de 3-4 lettres")
             new_photo = st.text_input("URL Photo de Profil", value=u_data.get("photo_url", ""), placeholder="https://...")
             new_bio = st.text_area("Bio / Description", value=u_data.get("bio", ""), placeholder="Mycologue passionné...")
             new_fb = st.text_input("Lien Facebook", value=u_data.get("social_fb", ""), placeholder="https://facebook.com/...")
@@ -334,7 +424,7 @@ if nav_mode == "👤 Mon Profil":
                 "inat_username": new_inat
             }
             # Try to add optional fields to update dict
-            # We blindly send them; if DB lacks columns, update_user_profile catches exception
+            if new_prefix: updates["fongarium_prefix"] = new_prefix
             if new_photo: updates["photo_url"] = new_photo
             if new_bio:   updates["bio"] = new_bio
             if new_fb:    updates["social_fb"] = new_fb
@@ -356,6 +446,7 @@ if nav_mode == "👤 Mon Profil":
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS bio text;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS social_fb text;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS social_insta text;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS fongarium_prefix text;
 """, language="sql")
 
 elif nav_mode == "📊 Tableau de Bord":
@@ -400,9 +491,20 @@ elif nav_mode == "📊 Tableau de Bord":
             else:
                 st.metric(label="Notion", value="Déconnecté", delta_color="inverse")
         
-        # Stat 3: User Role / Status
+        # Stat 3: User Role / Status -> Last Fongarium
         with st_col3:
-            st.metric(label="Compte", value="Membre")
+             # Logic: Get prefix from session. If set, query Notion.
+             user_info = st.session_state.get('user_info', {})
+             prefix = user_info.get("fongarium_prefix")
+             
+             if prefix:
+                 last_fong = get_last_fongarium_number(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
+                 if last_fong:
+                     st.metric(label="Fongarium (Dernier)", value=last_fong, delta="Suivant: +1")
+                 else:
+                     st.metric(label="Fongarium", value="Aucun", help=f"Aucune entrée trouvée avec le préfixe {prefix}")
+             else:
+                 st.metric(label="Fongarium", value="Non configuré", help="Configurez votre préfixe dans 'Mon Profil'")
             
         st.divider()
 
