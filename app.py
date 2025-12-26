@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from labels import generate_label_pdf
 from database import get_user_by_email, create_user_profile, log_action, update_user_profile
 from whitelist import AUTHORIZED_USERS
+import re
 
 
 # --- SECRETS MANAGEMENT ---
@@ -254,7 +255,7 @@ def count_user_notion_obs(token, db_id, target_user):
     return total_count
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_last_fongarium_number(token, db_id, target_user, prefix):
+def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
     """
     Récupère le dernier numéro de fongarium attribué pour un utilisateur donné.
     Ignore les codes temporaires (XXXX).
@@ -296,7 +297,6 @@ def get_last_fongarium_number(token, db_id, target_user, prefix):
         "page_size": 30 # On en prend 30 pour être sûr de sauter les XXXX
     }
 
-    import re
     # Regex strict : Prefix + Digits only (e.g. MRD0015)
     # Case insensitive match for prefix, but digits at end
     regex_pattern = re.compile(f"^{re.escape(prefix)}\d+$", re.IGNORECASE)
@@ -404,6 +404,8 @@ with st.sidebar:
         st.session_state.authenticated = False
         st.rerun()
 
+    st.caption("v1.2 (Regex Match)")
+
 # --- MAIN CONTENT SWITCHER ---
 
 if nav_mode == "👤 Mon Profil":
@@ -510,7 +512,7 @@ elif nav_mode == "📊 Tableau de Bord":
              prefix = user_info.get("fongarium_prefix")
              
              if prefix:
-                 last_fong, next_fong = get_last_fongarium_number(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
+                 last_fong, next_fong = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
                  if last_fong:
                      delta_msg = f"Suivant: {next_fong}" if next_fong else "Suivant: +1"
                      st.metric(label="Fongarium (Dernier)", value=last_fong, delta=delta_msg)
