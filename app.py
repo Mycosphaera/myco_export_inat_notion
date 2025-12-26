@@ -64,6 +64,29 @@ try:
 except FileNotFoundError:
     has_secrets = False
 
+# --- SUPABASE CLIENT ---
+try:
+    from supabase import create_client
+    if "supabase" in st.secrets:
+        # Helper to find keys
+        def get_secret(section, possibilities):
+            for k in possibilities:
+                if k in st.secrets[section]: return st.secrets[section][k]
+            return None
+            
+        supa_url = get_secret("supabase", ["url", "SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"])
+        supa_key = get_secret("supabase", ["key", "SUPABASE_KEY", "SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY"])
+        
+        if supa_url and supa_key:
+            supabase_client = create_client(supa_url, supa_key)
+        else:
+            supabase_client = None
+    else:
+        supabase_client = None
+except Exception as e:
+    # st.error(f"Supabase Init Error: {e}") # Silent fail if not configured
+    supabase_client = None
+
 # --- SIDEBAR (Connexion) ---
 with st.sidebar:
     st.header("🔐 Connexion")
