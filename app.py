@@ -211,14 +211,44 @@ with tab4:
                     sel_myco = f_col1.selectbox(f"Mycologue ({myco_key})", ["Tous"] + myco_options)
                     
                     # Projet
-                    # Check Select OR Multi-Select
+                    # Check Select OR Multi-Select OR Relation
+                    projet_map = {} # Name -> ID (for relations)
+                    
                     if projet_key in props_schema:
                         p_conf = props_schema[projet_key]
-                        if p_conf["type"] == "select":
+                        p_type = p_conf["type"]
+                        
+                        if p_type == "select":
                             projet_options = [opt["name"] for opt in p_conf["select"]["options"]]
-                        elif p_conf["type"] == "multi_select":
+                        elif p_type == "multi_select":
                             projet_options = [opt["name"] for opt in p_conf["multi_select"]["options"]]
-                    
+                        elif p_type == "relation":
+                            # It's a relation! We need to fetch the related database.
+                            try:
+                                rel_db_id = p_conf["relation"]["database_id"]
+                                # Query the related DB to get Names (Titles)
+                                # Only need Title and ID.
+                                url_rel = f"https://api.notion.com/v1/databases/{rel_db_id}/query"
+                                # Fetch all (or first 100)
+                                resp_rel = requests.post(url_rel, headers=headers, json={"page_size": 100})
+                                if resp_rel.status_code == 200:
+                                    results_rel = resp_rel.json().get("results", [])
+                                    # Extract titles
+                                    for r in results_rel:
+                                        r_props = r["properties"]
+                                        # Find Title prop
+                                        title_txt = "Sans titre"
+                                        for k, v in r_props.items():
+                                            if v["type"] == "title" and v["title"]:
+                                                title_txt = v["title"][0]["text"]["content"]
+                                                break
+                                        projet_options.append(title_txt)
+                                        projet_map[title_txt] = r["id"] # Store ID for filter
+                                    
+                                    projet_options = sorted(list(set(projet_options)))
+                            except Exception as e:
+                                st.warning(f"Impossible de charger la liste des projets (Relation): {e}")
+
                     if projet_options:
                         sel_proj = f_col2.selectbox(f"Projet ({projet_key})", ["Tous"] + projet_options)
                     else:
@@ -269,12 +299,17 @@ with tab4:
                 # Projet
                 if sel_proj and sel_proj != "Tous":
                     if projet_options:
-                         # Select / Multi-Select
+                         # Select / Multi-Select / Relation
                          p_type = props_schema[projet_key]["type"]
                          if p_type == "select":
                              notion_filter["and"].append({"property": projet_key, "select": {"equals": sel_proj}})
                          elif p_type == "multi_select":
                              notion_filter["and"].append({"property": projet_key, "multi_select": {"contains": sel_proj}})
+                         elif p_type == "relation":
+                             # Use ID from map
+                             if sel_proj in projet_map:
+                                 rel_id = projet_map[sel_proj]
+                                 notion_filter["and"].append({"property": projet_key, "relation": {"contains": rel_id}})
                     elif projet_key in props_schema:
                          # Text Fallback
                          p_type = props_schema[projet_key]["type"]
