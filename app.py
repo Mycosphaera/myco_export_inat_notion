@@ -5,9 +5,56 @@ from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_au
 from notion_client import Client
 from datetime import date, timedelta
 from labels import generate_label_pdf
+# Assure-toi d'importer la nouvelle fonction check_credentials
+from database import check_credentials, get_user_profile, log_action
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Importateur Myco-Notion", page_icon="🍄", layout="wide")
+# --- PAGE CONFIGURATION ---
+st.set_page_config(page_title="Portail Myco", layout="wide")
+
+# --- 2. GESTION DE LA SESSION ---
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'username' not in st.session_state:
+    st.session_state.username = ""
+
+# --- 3. FONCTION DE LOGIN ---
+def login_page():
+    st.title("🍄 Connexion au Portail")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        with st.form("login_form"):
+            st.write("Veuillez vous identifier")
+            username_input = st.text_input("Nom d'utilisateur")
+            password_input = st.text_input("Mot de passe", type="password")
+            
+            submit_button = st.form_submit_button("Se connecter")
+            
+            if submit_button:
+                if check_credentials(username_input, password_input):
+                    st.session_state.authenticated = True
+                    st.session_state.username = username_input
+                    st.success("Connexion réussie !")
+                    st.rerun() # Recharge la page pour entrer
+                else:
+                    st.error("Identifiants incorrects ❌")
+
+# --- 4. LE GARDIEN (GATEKEEPER) ---
+if not st.session_state.authenticated:
+    login_page()
+    st.stop() # ⛔ ARRÊT IMMÉDIAT du script ici si pas connecté
+
+# =========================================================
+# 🏰 BIENVENUE DANS LA CITADELLE (Ton App commence ici)
+# =========================================================
+
+# Sidebar de déconnexion et Profil
+with st.sidebar:
+    st.write(f"👤 **{st.session_state.username}**")
+    if st.button("Se déconnecter"):
+        st.session_state.authenticated = False
+        st.rerun()
 
 # --- HELPER FUNCTIONS ---
 @st.dialog("🍄 Détails de l'observation")
@@ -65,27 +112,10 @@ except FileNotFoundError:
     has_secrets = False
 
 # --- SUPABASE CLIENT ---
-try:
-    from supabase import create_client
-    if "supabase" in st.secrets:
-        # Helper to find keys
-        def get_secret(section, possibilities):
-            for k in possibilities:
-                if k in st.secrets[section]: return st.secrets[section][k]
-            return None
-            
-        supa_url = get_secret("supabase", ["url", "SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"])
-        supa_key = get_secret("supabase", ["key", "SUPABASE_KEY", "SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY"])
-        
-        if supa_url and supa_key:
-            supabase_client = create_client(supa_url, supa_key)
-        else:
-            supabase_client = None
-    else:
-        supabase_client = None
-except Exception as e:
-    # st.error(f"Supabase Init Error: {e}") # Silent fail if not configured
-    supabase_client = None
+# Géré via database.py maintenant
+supabase_client = None # Placeholder si le reste du code l'utilise encore, mais on devrait utiliser database.supabase
+from database import supabase as supabase_client # Alias pour compatibilité rétroactive locale
+
 
 # --- SIDEBAR (Connexion) ---
 with st.sidebar:
