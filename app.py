@@ -193,9 +193,66 @@ def show_details(obs_data):
         if obs_data.get('Photo URL'):
              st.link_button("Voir Photo HD", obs_data['Photo URL'])
 
+
     if obs_data.get('Description'):
         st.caption("Description:")
         st.write(obs_data['Description'])
+
+@st.cache_data(ttl=300, show_spinner=False)
+def count_user_notion_obs(token, db_id, target_user):
+    """
+    Compte précis des observations Notion filtrées par utilisateur.
+    Met en cache le résultat pour 5 minutes.
+    """
+    if not token or not db_id or not target_user: return 0
+    
+    url = f"https://api.notion.com/v1/databases/{db_id}/query"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    
+    # Payload: Filter by Mycologue
+    # Optimisation: On ne récupère que l'ID pour aller plus vite (filter_properties)
+    # Note: filter_properties réduit la payload reponse, mais on doit quand même paginer.
+    payload = {
+        "filter": {
+            "property": "Mycologue",
+            "select": {
+                "equals": target_user
+            }
+        },
+        "page_size": 100
+    }
+    
+    total_count = 0
+    has_more = True
+    next_cursor = None
+    
+    try:
+        while has_more:
+            if next_cursor:
+                payload["start_cursor"] = next_cursor
+            
+            resp = requests.post(url, headers=headers, json=payload)
+            if resp.status_code != 200:
+                print(f"Error Counting: {resp.status_code} {resp.text}")
+                break
+                
+            data = resp.json()
+            results = data.get("results", [])
+            total_count += len(results)
+            
+            has_more = data.get("has_more", False)
+            next_cursor = data.get("next_cursor")
+            
+    except Exception as e:
+        print(f"Count Error: {e}")
+        return 0
+        
+    return total_count
+
 
 # --- STATE MANAGEMENT ---
 if 'search_results' not in st.session_state:
@@ -328,12 +385,18 @@ elif nav_mode == "📊 Tableau de Bord":
             except:
                 st.metric(label="Obs. iNaturalist", value="--")
 
-        # Stat 2: Notion (Status)
+        # Stat 2: Notion (Count)
         with st_col2:
-            # We can't easily get total count without big query.
-            # Just show connected status
-            if notion:
-                st.metric(label="Notion", value="Connecté", delta="Prêt")
+            if has_secrets:
+                # Use cached function
+                # We use the specific notion name stored in session
+                myco_name = st.session_state.username
+                if myco_name:
+                    with st.spinner("Calcul..."):
+                        n_count = count_user_notion_obs(NOTION_TOKEN, DATABASE_ID, myco_name)
+                    st.metric(label=f"Notion ({myco_name})", value=n_count)
+                else:
+                    st.metric(label="Notion", value="--", help="Nom d'utilisateur non défini")
             else:
                 st.metric(label="Notion", value="Déconnecté", delta_color="inverse")
         
