@@ -414,6 +414,13 @@ with tab4:
                                 return p_dict["date"]["start"]
                             if ptype == "url":
                                 return p_dict["url"]
+                            if ptype == "number":
+                                return str(p_dict["number"])
+                            if ptype == "formula":
+                                # Handle Formula (String or Number)
+                                f_val = p_dict["formula"]
+                                if f_val["type"] == "string": return f_val["string"]
+                                if f_val["type"] == "number": return str(f_val["number"])
                             return ""
 
                         # Mapping based on fuzzy keys found earlier + Standard "Date"
@@ -442,13 +449,28 @@ with tab4:
                         fongarium = ""
                         if fong_col_name in props: fongarium = get_prop_text(props[fong_col_name])
                         
-                        # 3. Habitat (Relation)
+                        # 3. iNat ID (Formatted)
+                        # Try to find "No Inat." or candidates
+                        inat_id_val = ""
+                        # We already have 'inat_col_name' from the filter section logic
+                        # But strictly speaking 'inat_col_name' might be the URL column used for searching.
+                        # User specifically wants "No Inat." (Formula).
+                        # Let's try to find a formula column named variants of "No Inat"
+                        nid_key = next((k for k,v in props.items() if ("no" in k.lower() and "inat" in k.lower()) and v["type"] == "formula"), "")
+                        
+                        if nid_key and nid_key in props:
+                            inat_id_val = get_prop_text(props[nid_key])
+                        elif inat_col_name in props and props[inat_col_name]["type"] == "formula":
+                            # If the filter column itself was the formula
+                            inat_id_val = get_prop_text(props[inat_col_name])
+                        
+                        # 4. Habitat (Relation)
                         raw_habitat = []
                         hab_key = next((k for k in props if "habitat" in k.lower()), "Habitat")
                         if hab_key in props and props[hab_key]["type"] == "relation":
                             raw_habitat = [r["id"] for r in props[hab_key]["relation"]]
                             
-                        # 4. Substrate (Relation)
+                        # 5. Substrate (Relation)
                         raw_substrate = []
                         sub_key = next((k for k in props if "substra" in k.lower()), "Substrat")
                         if sub_key in props and props[sub_key]["type"] == "relation":
@@ -460,6 +482,7 @@ with tab4:
                         rows_notion.append({
                             "id": notion_id,
                             "Taxon": taxon,
+                            "ID iNaturalist": inat_id_val,
                             "Date": date_obs,
                             "Lieu": place,
                             "Mycologue": user,
