@@ -437,9 +437,30 @@ with tab4:
                     else:
                         sel_proj = f_col2.text_input(f"Projet ({projet_key})", placeholder="Recherche textuelle...")
                         
-                    # Date (Range support)
-                    sel_date = f_col3.date_input("Date (Période)", value=[], help="Sélectionnez une date unique ou une période (début et fin).")
-                
+                    # Date Logic (Year / Month / Specific Range)
+                    # We keep the old specific date input for precision, but add Year/Month for "Archives" style
+                    
+                    st.caption("Filtres Temporels")
+                    ft_col1, ft_col2 = st.columns(2)
+                    
+                    # Generate Years (Current back to 2010)
+                    import datetime
+                    current_year = datetime.date.today().year
+                    years_opt = [str(y) for y in range(current_year, 2009, -1)]
+                    
+                    sel_years = ft_col1.multiselect("Années", years_opt, placeholder="Toutes")
+                    
+                    months_map = {
+                        "Janvier": 1, "Février": 2, "Mars": 3, "Avril": 4, "Mai": 5, "Juin": 6,
+                        "Juillet": 7, "Août": 8, "Septembre": 9, "Octobre": 10, "Novembre": 11, "Décembre": 12
+                    }
+                    sel_months = ft_col2.multiselect("Mois", list(months_map.keys()), placeholder="Tous")
+                    
+                    # Specific Period (Fallback if no years selected? Or AND?)
+                    # Let's keep it separate as "Specific Range"
+                    with st.expander("📅 Date précise (Période)", expanded=False):
+                        sel_date = st.date_input("Sélectionner une période", value=[], help="Laissez vide pour utiliser les filtres Années/Mois ci-dessus.")
+
                 f_col4, f_col5 = st.columns(2)
                 
                 # iNat ID
@@ -455,10 +476,9 @@ with tab4:
                 if not found_inat:
                      inat_col_name = next((k for k, v in props_schema.items() if ("inat" in k.lower() or "url" in k.lower()) and v["type"] != "checkbox"), "URL Inaturalist")
                 
-                sel_inat_id = f_col4.text_input(f"ID iNaturalist (via {inat_col_name})", placeholder="ex: 123456, 789101 (séparés par virgule)")
+                sel_inat_id = f_col4.text_input(f"ID iNaturalist (via {inat_col_name})", placeholder="ex: 123456")
                 
                 # Fongarium
-                # Prioritize "No° fongarium", "No fongarium", "Numéro fongarium"
                 fong_candidates = ["No° fongarium", "No fongarium", "Numéro fongarium", "Code fongarium"]
                 fong_col_name = "No° fongarium"
                 found_fong = False
@@ -470,7 +490,18 @@ with tab4:
                 if not found_fong:
                      fong_col_name = next((k for k,v in props_schema.items() if "fongarium" in k.lower() and v["type"] not in ["checkbox", "formula"]), "No° fongarium")
                 
-                sel_fong = f_col5.text_input(f"No° Fongarium (via {fong_col_name})", placeholder="ex: MYCO-01, MYCO-02 (séparés par virgule)")
+                sel_fong = f_col5.text_input(f"No° Fongarium (via {fong_col_name})", placeholder="ex: MYCO-01")
+                
+                # Limit Selector
+                st.divider()
+                l_col1, l_col2 = st.columns([1, 4])
+                limit_opts = [50, 100, 200, 500, "Tout (Lent)"]
+                sel_limit = l_col1.selectbox("Nombre de résultats", limit_opts, index=0)
+                
+                # Calculate numeric limit
+                max_fetch = 50
+                if isinstance(sel_limit, int): max_fetch = sel_limit
+                else: max_fetch = 999999 # Unlimited
                 
                 # 3. Build Filter Payload
                 notion_filter = {"and": []}
@@ -482,14 +513,12 @@ with tab4:
                 # Projet
                 if sel_proj and sel_proj != "Tous":
                     if projet_options:
-                         # Select / Multi-Select / Relation
                          p_type = props_schema[projet_key]["type"]
                          if p_type == "select":
                              notion_filter["and"].append({"property": projet_key, "select": {"equals": sel_proj}})
                          elif p_type == "multi_select":
                              notion_filter["and"].append({"property": projet_key, "multi_select": {"contains": sel_proj}})
                          elif p_type == "relation":
-                             # Use ID from map
                              if sel_proj in projet_map:
                                  rel_id = projet_map[sel_proj]
                                  notion_filter["and"].append({"property": projet_key, "relation": {"contains": rel_id}})
@@ -503,30 +532,40 @@ with tab4:
                          elif p_type == "rich_text":
                               notion_filter["and"].append({"property": projet_key, "rich_text": {"contains": sel_proj}})
 
-                # Date
+                # Date Logic
+                # 1. Specific Date (Priority)
                 if sel_date:
                     if len(sel_date) == 1:
-                         # Exact Date (Day)
                          notion_filter["and"].append({"property": "Date", "date": {"equals": sel_date[0].isoformat()}})
                     elif len(sel_date) == 2:
-                         # Range
                          start_d, end_d = sel_date
-                         if start_d > end_d: start_d, end_d = end_d, start_d # Swap safely
+                         if start_d > end_d: start_d, end_d = end_d, start_d
                          notion_filter["and"].append({
                              "and": [
                                  {"property": "Date", "date": {"on_or_after": start_d.isoformat()}},
                                  {"property": "Date", "date": {"on_or_before": end_d.isoformat()}}
                              ]
                          })
+                # 2. Years (API Optimization)
+                elif sel_years:
+                    # Construct an OR group for each year selected
+                    # (Date >= YYYY-01-01 AND Date <= YYYY-12-31)
+                    year_or_group = {"or": []}
+                    for y in sel_years:
+                        year_or_group["or"].append({
+                            "and": [
+                                {"property": "Date", "date": {"on_or_after": f"{y}-01-01"}},
+                                {"property": "Date", "date": {"on_or_before": f"{y}-12-31"}}
+                            ]
+                        })
+                    notion_filter["and"].append(year_or_group)
                 
                 # iNat ID (Multi)
                 if sel_inat_id:
-                     # Parse CSV
                      id_tokens = [t.strip() for t in sel_inat_id.replace(","," ").split() if t.strip()]
                      if id_tokens:
                          type_inat = props_schema.get(inat_col_name, {}).get("type", "url")
                          or_clause = {"or": []}
-                         
                          for t in id_tokens:
                              if type_inat == "url":
                                   or_clause["or"].append({"property": inat_col_name, "url": {"contains": t}})
@@ -537,158 +576,216 @@ with tab4:
                                   except: pass
                              else:
                                   or_clause["or"].append({"property": inat_col_name, "rich_text": {"contains": t}})
-                         
                          if or_clause["or"]:
                              notion_filter["and"].append(or_clause)
 
                 # Fongarium (Multi)
                 if sel_fong:
-                    # Parse CSV
                     fong_tokens = [t.strip() for t in sel_fong.replace(","," ").split() if t.strip()]
                     if fong_tokens:
                         or_clause = {"or": []}
-                        # Usually Rich Text
                         for t in fong_tokens:
                             or_clause["or"].append({"property": fong_col_name, "rich_text": {"contains": t}})
-                        
                         if or_clause["or"]:
                              notion_filter["and"].append(or_clause)
 
-                # Payload
-                query_payload = {
-                    "page_size": 50,
-                    "sorts": [{"timestamp": "created_time", "direction": "descending"}]
-                }
-                
-                if notion_filter["and"]:
-                     query_payload["filter"] = notion_filter
-                
-                # Query Notion (POST /v1/databases/{id}/query)
+                # Query Loop (Pagination)
                 api_url_query = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-                resp_query = requests.post(api_url_query, headers=headers, json=query_payload)
+                
+                all_results = []
+                has_more = True
+                next_cursor = None
+                
+                # Progress bar if "Tout" is selected or limit > 100
+                prog_bar = st.empty()
+                if max_fetch > 100:
+                    prog_text = st.empty()
+                
+                while has_more and len(all_results) < max_fetch:
+                    # Payload
+                    query_payload = {
+                        "page_size": min(100, max_fetch - len(all_results)), # Max 100 per API call
+                        "sorts": [{"timestamp": "created_time", "direction": "descending"}]
+                    }
+                    if notion_filter["and"]:
+                        query_payload["filter"] = notion_filter
+                    if next_cursor:
+                        query_payload["start_cursor"] = next_cursor
+                    
+                    if max_fetch > 100:
+                        prog_text.caption(f"Chargement... ({len(all_results)} trouvés)")
+                    
+                    resp_query = requests.post(api_url_query, headers=headers, json=query_payload)
+                    
+                    if resp_query.status_code != 200:
+                         st.error(f"Erreur Query {resp_query.status_code}: {resp_query.text}")
+                         break
+                    else:
+                        data = resp_query.json()
+                        batch = data.get("results", [])
+                        
+                        # Python Filter: Months
+                        # If months selected, we filter the batch before adding
+                        if sel_months and not sel_date: # Only if specific date not overriden
+                            filtered_batch = []
+                            target_month_nums = [months_map[m] for m in sel_months]
+                            
+                            for p in batch:
+                                d_str = ""
+                                if "Date" in p["properties"] and p["properties"]["Date"]["date"]:
+                                    d_str = p["properties"]["Date"]["date"]["start"]
+                                
+                                if d_str:
+                                    try:
+                                        # d_str is YYYY-MM-DD
+                                        m_num = int(d_str.split("-")[1])
+                                        if m_num in target_month_nums:
+                                            filtered_batch.append(p)
+                                    except:
+                                        pass # Invalid date format
+                                else:
+                                    pass # No date, skip?
+                            
+                            # Note: Pagination logic issue here. 
+                            # If we filter by Python, we might fetch 100, keep 0, then stop loop if limit reached?
+                            # No, limit check 'len(all_results)' vs 'max_fetch'.
+                            # If we filter out, len(all_results) doesn't grow, so we continue fetching.
+                            # BUT careful: 'max_fetch - len(all_results)' might request 100, get 100, keep 0.
+                            # We must continue until Notion says 'has_more' is False OR we filled our bucket.
+                            
+                            all_results.extend(filtered_batch)
+                        else:
+                            all_results.extend(batch)
+                        
+                        has_more = data.get("has_more", False)
+                        next_cursor = data.get("next_cursor")
+                        
+                        if max_fetch <= 100: # Simple mode, stop after first page if limited
+                            if len(all_results) >= max_fetch: break
+                
+                if max_fetch > 100:
+                    prog_text.empty() # Clear text
                 
                 rows_notion = []
-                if resp_query.status_code != 200:
-                     st.error(f"Erreur Query {resp_query.status_code}: {resp_query.text}")
-                else:
-                    results = resp_query.json().get("results", [])
+                # Process results... (Use all_results)
+                results = all_results # Mapping variable
                     
-                    for p in results:
-                        props = p["properties"]
-                        
-                        # Helpers to extract text safely
-                        def get_prop_text(p_dict):
-                            if not p_dict: return ""
-                            ptype = p_dict["type"]
-                            if ptype == "title" and p_dict["title"]:
-                                return p_dict["title"][0]["text"]["content"]
-                            if ptype == "rich_text" and p_dict["rich_text"]:
-                                return p_dict["rich_text"][0]["text"]["content"]
-                            if ptype == "select" and p_dict["select"]:
-                                return p_dict["select"]["name"]
-                            if ptype == "date" and p_dict["date"]:
-                                return p_dict["date"]["start"]
-                            if ptype == "url":
-                                return p_dict["url"]
-                            if ptype == "number":
-                                return str(p_dict["number"])
-                            if ptype == "formula":
-                                # Handle Formula (String or Number)
-                                f_val = p_dict["formula"]
-                                if f_val["type"] == "string": return f_val["string"]
-                                if f_val["type"] == "number": return str(f_val["number"])
-                            return ""
+                for p in results:
+                    props = p["properties"]
+                    
+                    # Helpers to extract text safely
+                    def get_prop_text(p_dict):
+                        if not p_dict: return ""
+                        ptype = p_dict["type"]
+                        if ptype == "title" and p_dict["title"]:
+                            return p_dict["title"][0]["text"]["content"]
+                        if ptype == "rich_text" and p_dict["rich_text"]:
+                            return p_dict["rich_text"][0]["text"]["content"]
+                        if ptype == "select" and p_dict["select"]:
+                            return p_dict["select"]["name"]
+                        if ptype == "date" and p_dict["date"]:
+                            return p_dict["date"]["start"]
+                        if ptype == "url":
+                            return p_dict["url"]
+                        if ptype == "number":
+                            return str(p_dict["number"])
+                        if ptype == "formula":
+                            # Handle Formula (String or Number)
+                            f_val = p_dict["formula"]
+                            if f_val["type"] == "string": return f_val["string"]
+                            if f_val["type"] == "number": return str(f_val["number"])
+                        return ""
 
-                        # Mapping based on fuzzy keys found earlier + Standard "Date"
-                        taxon = "Inconnu"
-                        # Find Title Prop
-                        title_key = next((k for k,v in props.items() if v["type"] == "title"), "Titre")
-                        if title_key in props: taxon = get_prop_text(props[title_key]) or "Sans Titre"
+                    # Mapping based on fuzzy keys found earlier + Standard "Date"
+                    taxon = "Inconnu"
+                    # Find Title Prop
+                    title_key = next((k for k,v in props.items() if v["type"] == "title"), "Titre")
+                    if title_key in props: taxon = get_prop_text(props[title_key]) or "Sans Titre"
+                    
+                    date_obs = "Inconnue"
+                    if "Date" in props: date_obs = get_prop_text(props["Date"])
+                    
+                    place = "Inconnu"
+                    # Look for "Repère" or "Lieu"
+                    place_key = next((k for k in props if "repère" in k.lower() or "lieu" in k.lower()), "Repère")
+                    if place_key in props: place = get_prop_text(props[place_key])
+                    
+                    user = ""
+                    if myco_key in props: user = get_prop_text(props[myco_key])
+                    
+                    # Extra Fields Extraction
+                    # 1. Project (Projet d'inventaire)
+                    project = ""
+                    if projet_key in props: project = get_prop_text(props[projet_key])
+                    
+                    # 2. Fongarium
+                    fongarium = ""
+                    if fong_col_name in props: fongarium = get_prop_text(props[fong_col_name])
+                    
+                    # 3. iNat ID (Formatted)
+                    # Try to find "No Inat." or candidates
+                    inat_id_val = ""
+                    # We already have 'inat_col_name' from the filter section logic
+                    # But strictly speaking 'inat_col_name' might be the URL column used for searching.
+                    # User specifically wants "No Inat." (Formula).
+                    # Let's try to find a formula column named variants of "No Inat"
+                    nid_key = next((k for k,v in props.items() if ("no" in k.lower() and "inat" in k.lower()) and v["type"] == "formula"), "")
+                    
+                    if nid_key and nid_key in props:
+                        inat_id_val = get_prop_text(props[nid_key])
+                    elif inat_col_name in props and props[inat_col_name]["type"] == "formula":
+                        # If the filter column itself was the formula
+                        inat_id_val = get_prop_text(props[inat_col_name])
+                    
+                    # 4. Habitat (Relation)
+                    raw_habitat = []
+                    hab_key = next((k for k in props if "habitat" in k.lower()), "Habitat")
+                    if hab_key in props and props[hab_key]["type"] == "relation":
+                        raw_habitat = [r["id"] for r in props[hab_key]["relation"]]
                         
-                        date_obs = "Inconnue"
-                        if "Date" in props: date_obs = get_prop_text(props["Date"])
-                        
-                        place = "Inconnu"
-                        # Look for "Repère" or "Lieu"
-                        place_key = next((k for k in props if "repère" in k.lower() or "lieu" in k.lower()), "Repère")
-                        if place_key in props: place = get_prop_text(props[place_key])
-                        
-                        user = ""
-                        if myco_key in props: user = get_prop_text(props[myco_key])
-                        
-                        # Extra Fields Extraction
-                        # 1. Project (Projet d'inventaire)
-                        project = ""
-                        if projet_key in props: project = get_prop_text(props[projet_key])
-                        
-                        # 2. Fongarium
-                        fongarium = ""
-                        if fong_col_name in props: fongarium = get_prop_text(props[fong_col_name])
-                        
-                        # 3. iNat ID (Formatted)
-                        # Try to find "No Inat." or candidates
-                        inat_id_val = ""
-                        # We already have 'inat_col_name' from the filter section logic
-                        # But strictly speaking 'inat_col_name' might be the URL column used for searching.
-                        # User specifically wants "No Inat." (Formula).
-                        # Let's try to find a formula column named variants of "No Inat"
-                        nid_key = next((k for k,v in props.items() if ("no" in k.lower() and "inat" in k.lower()) and v["type"] == "formula"), "")
-                        
-                        if nid_key and nid_key in props:
-                            inat_id_val = get_prop_text(props[nid_key])
-                        elif inat_col_name in props and props[inat_col_name]["type"] == "formula":
-                            # If the filter column itself was the formula
-                            inat_id_val = get_prop_text(props[inat_col_name])
-                        
-                        # 4. Habitat (Relation)
-                        raw_habitat = []
-                        hab_key = next((k for k in props if "habitat" in k.lower()), "Habitat")
-                        if hab_key in props and props[hab_key]["type"] == "relation":
-                            raw_habitat = [r["id"] for r in props[hab_key]["relation"]]
-                            
-                        # 5. Substrate (Relation)
-                        raw_substrate = []
-                        sub_key = next((k for k in props if "substra" in k.lower()), "Substrat")
-                        if sub_key in props and props[sub_key]["type"] == "relation":
-                             raw_substrate = [r["id"] for r in props[sub_key]["relation"]]
+                    # 5. Substrate (Relation)
+                    raw_substrate = []
+                    sub_key = next((k for k in props if "substra" in k.lower()), "Substrat")
+                    if sub_key in props and props[sub_key]["type"] == "relation":
+                            raw_substrate = [r["id"] for r in props[sub_key]["relation"]]
 
-                        # 6. GPS (Lat/Long)
-                        # Prioritize explicit "sexadécimal" columns as requested
-                        lat_key = "Latitude (sexadécimal)"
-                        if lat_key not in props:
-                            lat_key = next((k for k in props if "lat" in k.lower() and "re" not in k.lower()), "Latitude")
-                            
-                        lng_key = "Longitude (sexadécimal)"
-                        if lng_key not in props:
-                             lng_key = next((k for k in props if "long" in k.lower()), "Longitude")
+                    # 6. GPS (Lat/Long)
+                    # Prioritize explicit "sexadécimal" columns as requested
+                    lat_key = "Latitude (sexadécimal)"
+                    if lat_key not in props:
+                        lat_key = next((k for k in props if "lat" in k.lower() and "re" not in k.lower()), "Latitude")
                         
-                        gps_val = ""
-                        lat_val = ""
-                        lng_val = ""
-                        
-                        if lat_key in props: lat_val = get_prop_text(props[lat_key])
-                        if lng_key in props: lng_val = get_prop_text(props[lng_key])
-                        
-                        if lat_val and lng_val:
-                            gps_val = f"{lat_val}, {lng_val}"
+                    lng_key = "Longitude (sexadécimal)"
+                    if lng_key not in props:
+                            lng_key = next((k for k in props if "long" in k.lower()), "Longitude")
+                    
+                    gps_val = ""
+                    lat_val = ""
+                    lng_val = ""
+                    
+                    if lat_key in props: lat_val = get_prop_text(props[lat_key])
+                    if lng_key in props: lng_val = get_prop_text(props[lng_key])
+                    
+                    if lat_val and lng_val:
+                        gps_val = f"{lat_val}, {lng_val}"
 
-                        notion_id = p["id"]
-                        page_url = p["url"]
-                        
-                        rows_notion.append({
-                            "id": notion_id,
-                            "Taxon": taxon,
-                            "ID iNaturalist": inat_id_val,
-                            "Date": date_obs,
-                            "Lieu": place,
-                            "Mycologue": user,
-                            "custom_url": page_url,
-                            "Projet": project,
-                            "Fongarium": fongarium,
-                            "raw_habitat": raw_habitat,
-                            "raw_substrate": raw_substrate,
-                            "GPS": gps_val
-                        })
+                    notion_id = p["id"]
+                    page_url = p["url"]
+                    
+                    rows_notion.append({
+                        "id": notion_id,
+                        "Taxon": taxon,
+                        "ID iNaturalist": inat_id_val,
+                        "Date": date_obs,
+                        "Lieu": place,
+                        "Mycologue": user,
+                        "custom_url": page_url,
+                        "Projet": project,
+                        "Fongarium": fongarium,
+                        "raw_habitat": raw_habitat,
+                        "raw_substrate": raw_substrate,
+                        "GPS": gps_val
+                    })
                 
                 if rows_notion:
                     df_notion = pd.DataFrame(rows_notion)
