@@ -481,8 +481,14 @@ with tab4:
                              raw_substrate = [r["id"] for r in props[sub_key]["relation"]]
 
                         # 6. GPS (Lat/Long)
-                        lat_key = next((k for k in props if "lat" in k.lower() and "re" not in k.lower()), "Latitude") # Avoid 'Relatif' etc if possible, simplistic
-                        lng_key = next((k for k in props if "long" in k.lower()), "Longitude")
+                        # Prioritize explicit "sexadécimal" columns as requested
+                        lat_key = "Latitude (sexadécimal)"
+                        if lat_key not in props:
+                            lat_key = next((k for k in props if "lat" in k.lower() and "re" not in k.lower()), "Latitude")
+                            
+                        lng_key = "Longitude (sexadécimal)"
+                        if lng_key not in props:
+                             lng_key = next((k for k in props if "long" in k.lower()), "Longitude")
                         
                         gps_val = ""
                         lat_val = ""
