@@ -476,6 +476,20 @@ with tab4:
                         if sub_key in props and props[sub_key]["type"] == "relation":
                              raw_substrate = [r["id"] for r in props[sub_key]["relation"]]
 
+                        # 6. GPS (Lat/Long)
+                        lat_key = next((k for k in props if "lat" in k.lower() and "re" not in k.lower()), "Latitude") # Avoid 'Relatif' etc if possible, simplistic
+                        lng_key = next((k for k in props if "long" in k.lower()), "Longitude")
+                        
+                        gps_val = ""
+                        lat_val = ""
+                        lng_val = ""
+                        
+                        if lat_key in props: lat_val = get_prop_text(props[lat_key])
+                        if lng_key in props: lng_val = get_prop_text(props[lng_key])
+                        
+                        if lat_val and lng_val:
+                            gps_val = f"{lat_val}, {lng_val}"
+
                         notion_id = p["id"]
                         page_url = p["url"]
                         
@@ -490,7 +504,8 @@ with tab4:
                             "Projet": project,
                             "Fongarium": fongarium,
                             "raw_habitat": raw_habitat,
-                            "raw_substrate": raw_substrate
+                            "raw_substrate": raw_substrate,
+                            "GPS": gps_val
                         })
                 
                 if rows_notion:

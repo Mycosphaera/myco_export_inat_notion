@@ -80,10 +80,13 @@ def create_label_flowables(obs, styles, options):
         f"<b>Date:</b> {date_str}",
         f"<b>Loc:</b> {place}",
         f"<b>Det:</b> {collector}",
-        f"<b>ID:</b> {obs['id']}"
     ]
     
-    # Extra Fields (Notion)
+    # iNaturalist ID (Short) instead of Notion UUID
+    if obs.get('ID iNaturalist'):
+        meta_lines.append(f"<b>iNat:</b> {obs['ID iNaturalist']}")
+    
+    # Extra Fields (Notion/iNat)
     if obs.get('fongarium_no'):
         meta_lines.append(f"<b>No:</b> {obs['fongarium_no']}")
         
@@ -96,10 +99,10 @@ def create_label_flowables(obs, styles, options):
     if obs.get('substrate'):
         meta_lines.append(f"<b>Sub:</b> {obs['substrate']}")
 
-    if options.get('include_coords'):
-        loc = obs.get('location')
-        if loc:
-             meta_lines.append(f"<b>GPS:</b> {loc}")
+    # GPS
+    gps = obs.get('GPS') or obs.get('location')
+    if gps:
+         meta_lines.append(f"<b>GPS:</b> {gps}")
 
     meta_text = "<br/>".join(meta_lines)
     meta_para = Paragraph(meta_text, style_small)
