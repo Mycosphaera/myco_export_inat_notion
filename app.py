@@ -1055,7 +1055,7 @@ with tab1:
                 # Logic below uses selected_users if present, else default?
                 # Let's keep it clean: params will use this list. 
                 # If list empty, maybe params['user_id'] is empty (all users)? Or default?
-                if default_user and not st.session_state.selected_users:
+                if st.session_state.inat_username and not st.session_state.selected_users:
                      # Pre-populate default if nothing selected yet?
                      # Risky if they want "All". 
                      # Let's just show "Aucun utilisateur filtré (Tout le monde)"
