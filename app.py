@@ -132,19 +132,23 @@ with tab3:
                  
                  submitted = st.form_submit_button("Générer PDF 📄", type="primary")
                  
-             if submitted and selected_obs_objects:
-                  options = {
+             if submitted:
+                  # Prepare Options
+                  label_options = {
                       "title": title_input,
                       "include_coords": include_coords
                   }
+                  
                   try:
-                      pdf_data = generate_label_pdf(selected_obs_objects, options)
+                      with st.spinner("Génération..."):
+                          pdf_data = generate_label_pdf(selected_obs_objects, label_options)
+                      
                       st.balloons()
                       st.success("PDF Généré avec succès !")
                       st.download_button(
                           label="📥 Télécharger le PDF",
                           data=pdf_data,
-                          file_name="etiquettes_myco.pdf",
+                          file_name="etiquettes_inat.pdf",
                           mime="application/pdf"
                       )
                   except Exception as e:
@@ -596,7 +600,9 @@ with tab4:
                                              "project": row.get("Projet", ""),
                                              "fongarium_no": row.get("Fongarium", ""),
                                              "habitat": hab_name,
-                                             "substrate": sub_name
+                                             "substrate": sub_name,
+                                             "ID iNaturalist": row.get("ID iNaturalist", ""),
+                                             "GPS": row.get("GPS", "")
                                          }
                                          obs_for_labels.append(obs)
                                 
