@@ -3,25 +3,31 @@ from supabase import create_client
 
 # --- SUPABASE CLIENT INITIALIZATION ---
 try:
-    if "supabase" in st.secrets:
-        # Helper to find keys robustly
-        def get_secret(section, possibilities):
-            for k in possibilities:
+    # Helper to find keys in a section OR at root (for Streamlit Cloud compatibility)
+    def find_key(possible_names, section="supabase"):
+        # 1. Try Section
+        if section in st.secrets:
+            for k in possible_names:
                 if k in st.secrets[section]: return st.secrets[section][k]
-            return None
-            
-        supa_url = get_secret("supabase", ["url", "SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"])
-        supa_key = get_secret("supabase", ["key", "SUPABASE_KEY", "SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY"])
         
-        if supa_url and supa_key:
-            supabase = create_client(supa_url, supa_key)
-        else:
-            supabase = None
+        # 2. Try Root
+        for k in possible_names:
+            if k in st.secrets: return st.secrets[k]
+        
+        return None
+
+    supa_url = find_key(["url", "URL", "SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"])
+    supa_key = find_key(["key", "KEY", "SUPABASE_KEY", "SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"])
+    
+    if supa_url and supa_key:
+        supabase = create_client(supa_url, supa_key)
     else:
+        # print("Supabase keys not found.")
         supabase = None
+
 except Exception as e:
     # Silent fail if not configured, or log error
-    # print(f"Supabase Init Error: {e}") 
+    print(f"Supabase Init Error: {e}") 
     supabase = None
 
 def get_user_by_email(email):
@@ -30,18 +36,22 @@ def get_user_by_email(email):
     Retourne le profil complet ou None.
     """
     if not supabase:
+        print("❌ Supabase client NOT initialized in get_user_by_email")
         return None
     try:
         # On suppose que la colonne s'appelle 'email' ou qu'on utilise 'auth_username' comme email
         # Adaptez le nom de la colonne si besoin (dans Supabase, souvent 'email' ou 'auth_username')
+        print(f"🔍 Searching user: {email}")
         response = supabase.table("user_profiles").select("*").eq("auth_username", email).execute()
         
         if response.data and len(response.data) > 0:
+            print(f"✅ User found: {response.data[0]['auth_username']}")
             return response.data[0]
         else:
+            print("❌ User not found in DB request.")
             return None
     except Exception as e:
-        print(f"Erreur DB: {e}")
+        print(f"Erreur DB (get_user): {e}")
         return None
 
 def create_user_profile(email, notion_name, inat_username):
@@ -66,6 +76,14 @@ def create_user_profile(email, notion_name, inat_username):
         return True # Si pas d'exception, on suppose que ça a marché (API v2 retourne parfois data=[...])
     except Exception as e:
         print(f"Erreur Création Profil: {e}")
+        # Detect Duplicate Key Error (Postgres Code 23505)
+        # Supabase-py often matches strings in message
+        err_msg = str(e).lower()
+        if "duplicate key" in err_msg or "unique constraint" in err_msg:
+             st.error("⚠️ Ce compte existe déjà ! Essayez de vous connecter.")
+             return False
+        
+        st.error(f"Erreur technique: {e}")
         return False
 
 # Anciennes fonctions gardées pour compatibilité ou log
