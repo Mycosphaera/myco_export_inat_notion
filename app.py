@@ -231,6 +231,7 @@ with tab4:
                                 url_rel = f"https://api.notion.com/v1/databases/{rel_db_id}/query"
                                 # Fetch all (or first 100)
                                 resp_rel = requests.post(url_rel, headers=headers, json={"page_size": 100})
+                                
                                 if resp_rel.status_code == 200:
                                     results_rel = resp_rel.json().get("results", [])
                                     # Extract titles
@@ -242,12 +243,18 @@ with tab4:
                                             if v["type"] == "title" and v["title"]:
                                                 title_txt = v["title"][0]["text"]["content"]
                                                 break
-                                        projet_options.append(title_txt)
-                                        projet_map[title_txt] = r["id"] # Store ID for filter
+                                        if title_txt:
+                                            projet_options.append(title_txt)
+                                            projet_map[title_txt] = r["id"] # Store ID for filter
                                     
                                     projet_options = sorted(list(set(projet_options)))
+                                elif resp_rel.status_code == 404:
+                                     st.warning(f"⚠️ **Accès refusé** à la base de données liée 'Projets' (ID: {rel_db_id}).\n\n"
+                                                "L'intégration 'iNat Sync' doit être invitée sur cette base de données aussi (via le menu 'Connections' sur la page Notion des projets).")
+                                else:
+                                     st.error(f"Erreur chargement projets: {resp_rel.status_code} {resp_rel.text}")
                             except Exception as e:
-                                st.warning(f"Impossible de charger la liste des projets (Relation): {e}")
+                                st.warning(f"Exception chargement projets: {e}")
 
                     if projet_options:
                         sel_proj = f_col2.selectbox(f"Projet ({projet_key})", ["Tous"] + projet_options)
