@@ -5,8 +5,25 @@ from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_au
 from notion_client import Client
 from datetime import date, timedelta
 from labels import generate_label_pdf
-# Assure-toi d'importer la nouvelle fonction check_credentials
-from database import check_credentials, get_user_profile, log_action
+from database import get_user_by_email, create_user_profile, log_action
+from whitelist import AUTHORIZED_USERS
+
+
+# --- SECRETS MANAGEMENT ---
+try:
+    NOTION_TOKEN = st.secrets["notion"]["token"] if "notion" in st.secrets else st.secrets["NOTION_TOKEN"]
+    DATABASE_ID = st.secrets["notion"]["database_id"] if "notion" in st.secrets else st.secrets["DATABASE_ID"]
+    has_secrets = True
+except Exception:
+    try:
+         # Fallback old flat structure
+         NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
+         DATABASE_ID = st.secrets["DATABASE_ID"]
+         has_secrets = True
+    except:
+         has_secrets = False
+         NOTION_TOKEN = None
+         DATABASE_ID = None
 
 # --- PAGE CONFIGURATION ---
 # --- PAGE CONFIGURATION ---
@@ -18,27 +35,130 @@ if 'authenticated' not in st.session_state:
 if 'username' not in st.session_state:
     st.session_state.username = ""
 
-# --- 3. FONCTION DE LOGIN ---
+def get_notion_mycologists():
+    """Récupère la liste des options de la propriété 'Mycologue' dans Notion"""
+    try:
+        if not has_secrets: return []
+        # On utilise le client global 'notion' initialisé plus bas, ou on le recrée localement
+        # Pour être sûr, on le recrée ici car 'notion' est init plus bas dans le script
+        local_notion = Client(auth=NOTION_TOKEN, notion_version="2022-06-28") 
+        
+        db = local_notion.databases.retrieve(DATABASE_ID)
+        props = db.get("properties", {})
+        
+        # On cherche la colonne "Mycologue" (Select ou Multi-select)
+        myco_prop = props.get("Mycologue", {})
+        options = []
+        
+        if myco_prop.get("type") == "select":
+            options = [opt["name"] for opt in myco_prop.get("select", {}).get("options", [])]
+        elif myco_prop.get("type") == "multi_select":
+            options = [opt["name"] for opt in myco_prop.get("multi_select", {}).get("options", [])]
+            
+        return sorted(options)
+    except Exception as e:
+        print(f"Erreur Retrieve Notion Schema: {e}")
+        return []
+
+# --- 3. FONCTION DE LOGIN / PORTAIL ---
 def login_page():
-    st.title("🍄 Connexion au Portail")
+    st.markdown("""
+    <h1 style='text-align: center; color: #2E8B57;'>🍄 Portail Myco</h1>
+    <p style='text-align: center;'>Identifiez-vous pour accéder à vos outils.</p>
+    """, unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        with st.form("login_form"):
-            st.write("Veuillez vous identifier")
-            username_input = st.text_input("Nom d'utilisateur")
-            password_input = st.text_input("Mot de passe", type="password")
+        tab_login, tab_register = st.tabs(["🔑 Connexion", "✨ Créer mon portail"])
+        
+        # --- TAB CONNEXION (Step 0) ---
+        with tab_login:
+            with st.form("login_form"):
+                email_input = st.text_input("Adresse Email").lower().strip()
+                submit_login = st.form_submit_button("Accéder à mon espace")
+                
+                if submit_login:
+                    user = get_user_by_email(email_input)
+                    if user:
+                        st.session_state.authenticated = True
+                        st.session_state.username = user.get("notion_user_name", email_input)
+                        st.session_state.inat_username = user.get("inat_username", "")
+                        st.success(f"Bienvenue, {st.session_state.username} !")
+                        st.rerun()
+                    else:
+                        st.error("Email inconnu. Avez-vous créé votre portail ?")
+
+        # --- TAB INSCRIPTION (Wizard) ---
+        with tab_register:
             
-            submit_button = st.form_submit_button("Se connecter")
+            # Étape 1 : Vérification Email (Whitelist)
+            if 'reg_step' not in st.session_state:
+                st.session_state.reg_step = 1
+            if 'reg_email' not in st.session_state:
+                st.session_state.reg_email = ""
+
+            if st.session_state.reg_step == 1:
+                st.write("#### Étape 1 : Vérification")
+                st.info("L'accès est restreint aux membres autorisés.")
+                
+                email_check = st.text_input("Votre Email", key="reg_email_input").lower().strip()
+                
+                if st.button("Vérifier mon éligibilité"):
+                    if not email_check:
+                        st.warning("Entrez un email.")
+                    else:
+                        # RÈGLE : Liste expresse OU domaine @mycosphaera.com
+                        is_authorized = False
+                        if email_check.endswith("@mycosphaera.com"):
+                           is_authorized = True
+                        elif email_check in [u.lower() for u in AUTHORIZED_USERS]:
+                           is_authorized = True
+                           
+                        if is_authorized:
+                            st.session_state.reg_email = email_check
+                            st.session_state.reg_step = 2
+                            st.rerun()
+                        else:
+                            st.error("⛔ Désolé, cet email n'est pas autorisé.")
+
             
-            if submit_button:
-                if check_credentials(username_input, password_input):
-                    st.session_state.authenticated = True
-                    st.session_state.username = username_input
-                    st.success("Connexion réussie !")
-                    st.rerun() # Recharge la page pour entrer
-                else:
-                    st.error("Identifiants incorrects ❌")
+            # Étape 2 : Création Profil
+            elif st.session_state.reg_step == 2:
+                st.write("#### Étape 2 : Création du Profil")
+                st.success(f"✅ Email autorisé : {st.session_state.reg_email}")
+                
+                # Fetch Notion Mycologists List (Try, default to empty)
+                myco_options = get_notion_mycologists()
+                
+                with st.form("create_profile_form"):
+                    # Email est pré-rempli et verrouillé (puisque validé)
+                    st.text_input("Votre Email", value=st.session_state.reg_email, disabled=True)
+                    
+                    # Fallback Logic: Si la liste est vide (erreur ou pas de droits), on met un champ texte libre
+                    if myco_options:
+                        reg_notion_name = st.selectbox("Votre Nom sur Notion (Mycologue)", options=myco_options)
+                    else:
+                        st.warning("⚠️ Impossible de charger la liste Notion (droits insuffisants ?). Entrez votre nom manuellement.")
+                        reg_notion_name = st.text_input("Votre Nom sur Notion (Mycologue)")
+                    
+                    reg_inat = st.text_input("Votre Nom d'utilisateur iNaturalist")
+                    
+                    if st.form_submit_button("Finaliser mon portail"):
+                        if not reg_inat or not reg_notion_name:
+                            st.warning("Tout remplir SVP.")
+                        else:
+                            # On utilise reg_email du state
+                            success = create_user_profile(st.session_state.reg_email, reg_notion_name, reg_inat)
+                            if success:
+                                st.balloons()
+                                st.success("Portail créé ! Vous pouvez maintenant vous connecter.")
+                                st.session_state.reg_step = 1 # Reset
+                            else:
+                                st.error("Erreur technique.")
+                
+                if st.button("Retour"):
+                    st.session_state.reg_step = 1
+                    st.rerun()
 
 # --- 4. LE GARDIEN (GATEKEEPER) ---
 if not st.session_state.authenticated:
@@ -104,12 +224,8 @@ if 'editor_key_version' not in st.session_state:
     st.session_state.editor_key_version = 0
 
 # --- SECRETS MANAGEMENT ---
-try:
-    NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
-    DATABASE_ID = st.secrets["DATABASE_ID"]
-    has_secrets = True
-except FileNotFoundError:
-    has_secrets = False
+# (Moved to top of script)
+has_secrets = True if NOTION_TOKEN else False
 
 # --- SUPABASE CLIENT ---
 # Géré via database.py maintenant
@@ -125,7 +241,11 @@ with st.sidebar:
         NOTION_TOKEN = st.text_input("Token Notion", type="password")
         DATABASE_ID = st.text_input("ID Database")
     
-    default_user = st.text_input("Utilisateur par défaut", value="mycosphaera")
+    # On utilise le pseudo iNat lié au compte si disponible
+    default_inat = st.session_state.get("inat_username", "mycosphaera")
+    if not default_inat: default_inat = "mycosphaera"
+    
+    default_user = st.text_input("Utilisateur par défaut", value=default_inat)
     
     # Sanitize DATABASE_ID just in case user pasted a full URL
     if DATABASE_ID and "notion.so" in DATABASE_ID:
@@ -138,13 +258,12 @@ with st.sidebar:
              # If exact ID is 32 chars +-, handled. If it has - it is also fine.
         except:
              pass 
-    if DATABASE_ID:
-        DATABASE_ID = DATABASE_ID.strip()
-
 # --- NOTION CLIENT ---
 if NOTION_TOKEN:
-    # Restoring user's preferred version string
-    notion = Client(auth=NOTION_TOKEN, notion_version="2025-09-03")
+    # Restoring user's preferred version string but ensuring it works with 2022-06-28 behavior for properties
+    # User asked for 2025, but 2022 is the one returning properties. 
+    # We stick to 2022-06-28 for functional reasons as confirmed by debug.
+    notion = Client(auth=NOTION_TOKEN, notion_version="2022-06-28")
 
 # --- INTERFACE ---
 tab1, tab2, tab3, tab4 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes", "📚 Explorer Notion"])

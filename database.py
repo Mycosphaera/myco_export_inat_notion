@@ -24,51 +24,51 @@ except Exception as e:
     # print(f"Supabase Init Error: {e}") 
     supabase = None
 
-def check_credentials(username, password):
+def get_user_by_email(email):
     """
-    Vérifie si le nom d'utilisateur et le mot de passe correspondent.
-    Retourne True si c'est bon, False sinon.
+    Récupère un utilisateur par son email.
+    Retourne le profil complet ou None.
     """
     if not supabase:
-        return False
-
+        return None
     try:
-        # On cherche une ligne qui a EXACTEMENT ce nom et ce mot de passe
-        response = supabase.table("user_profiles")\
-            .select("*")\
-            .eq("auth_username", username)\
-            .eq("password", password)\
-            .execute()
+        # On suppose que la colonne s'appelle 'email' ou qu'on utilise 'auth_username' comme email
+        # Adaptez le nom de la colonne si besoin (dans Supabase, souvent 'email' ou 'auth_username')
+        response = supabase.table("user_profiles").select("*").eq("auth_username", email).execute()
         
-        # Si la liste 'data' n'est pas vide, c'est que l'utilisateur existe
         if response.data and len(response.data) > 0:
-            return True
+            return response.data[0]
         else:
-            return False
+            return None
     except Exception as e:
-        print(f"Erreur de connexion : {e}")
+        print(f"Erreur DB: {e}")
+        return None
+
+def create_user_profile(email, notion_name, inat_username):
+    """
+    Crée un nouveau profil utilisateur.
+    """
+    if not supabase:
+        return False
+    
+    new_user = {
+        "auth_username": email,       # On utilise l'email comme identifiant unique
+        "notion_user_name": notion_name, # CORRECTION: Nom de colonne réel
+        "inat_username": inat_username,
+        "password": "NO_PASSWORD"     # Champ technique rempli par défaut
+    }
+    
+    try:
+        response = supabase.table("user_profiles").insert(new_user).execute()
+        # Vérification loose car l'API change parfois
+        if response.data: 
+            return True
+        return True # Si pas d'exception, on suppose que ça a marché (API v2 retourne parfois data=[...])
+    except Exception as e:
+        print(f"Erreur Création Profil: {e}")
         return False
 
-def get_user_profile(username):
-    """
-    Récupère les infos du profil (ex: lien Notion)
-    """
-    if not supabase:
-        return None
-    try:
-        response = supabase.table("user_profiles").select("*").eq("auth_username", username).execute()
-        if response.data:
-            return response.data[0]
-        return None
-    except Exception:
-        return None
-
+# Anciennes fonctions gardées pour compatibilité ou log
 def log_action(username, action, details=""):
-    """
-    Log une action utilisateur (placeholder pour le moment)
-    """
-    if not supabase:
-        return
-    # print(f"[LOG] {username}: {action} - {details}")
-    # Plus tard, on pourra écrire dans une table 'logs'
-    pass
+    if not supabase: return
+    # pass
