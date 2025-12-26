@@ -90,3 +90,19 @@ def create_user_profile(email, notion_name, inat_username):
 def log_action(username, action, details=""):
     if not supabase: return
     # pass
+
+def update_user_profile(user_id, updates):
+    """
+    Updates the user profile in Supabase.
+    :param user_id: UUID of the user from 'user_profiles' table (not auth).
+    :param updates: Dictionary of columns to update.
+    :return: True if success, Error message (str) if fail.
+    """
+    if not supabase:
+        return "Erreur de connexion Supabase."
+    
+    try:
+        response = supabase.table("user_profiles").update(updates).eq("id", user_id).execute()
+        return True
+    except Exception as e:
+        return f"Erreur lors de la mise à jour: {e}"

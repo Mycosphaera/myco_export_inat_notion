@@ -5,7 +5,7 @@ from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_au
 from notion_client import Client
 from datetime import date, timedelta
 from labels import generate_label_pdf
-from database import get_user_by_email, create_user_profile, log_action
+from database import get_user_by_email, create_user_profile, log_action, update_user_profile
 from whitelist import AUTHORIZED_USERS
 
 
@@ -26,7 +26,6 @@ except Exception:
          DATABASE_ID = None
 
 # --- PAGE CONFIGURATION ---
-# --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Portail Myco", layout="wide")
 
 # --- 2. GESTION DE LA SESSION ---
@@ -34,6 +33,8 @@ if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'username' not in st.session_state:
     st.session_state.username = ""
+if 'user_info' not in st.session_state:
+    st.session_state.user_info = {} # To store full profile
 
 def get_notion_mycologists():
     """Récupère la liste des options de la propriété 'Mycologue' dans Notion"""
@@ -81,8 +82,14 @@ def login_page():
                     user = get_user_by_email(email_input)
                     if user:
                         st.session_state.authenticated = True
+                        st.session_state.user_info = user
                         st.session_state.username = user.get("notion_user_name", email_input)
                         st.session_state.inat_username = user.get("inat_username", "")
+                        
+                        # Auto-fill filters right here on login!
+                        if st.session_state.inat_username:
+                            st.session_state.selected_users = [st.session_state.inat_username]
+                        
                         st.success(f"Bienvenue, {st.session_state.username} !")
                         st.rerun()
                     else:
@@ -169,13 +176,6 @@ if not st.session_state.authenticated:
 # 🏰 BIENVENUE DANS LA CITADELLE (Ton App commence ici)
 # =========================================================
 
-# Sidebar de déconnexion et Profil
-with st.sidebar:
-    st.write(f"👤 **{st.session_state.username}**")
-    if st.button("Se déconnecter"):
-        st.session_state.authenticated = False
-        st.rerun()
-
 # --- HELPER FUNCTIONS ---
 @st.dialog("🍄 Détails de l'observation")
 def show_details(obs_data):
@@ -197,15 +197,6 @@ def show_details(obs_data):
         st.caption("Description:")
         st.write(obs_data['Description'])
 
-# --- HEADER SECTION ---
-st.markdown("""
-<div class="brand-container">
-    <p class="brand-tag">MYCOSPHAERA</p>
-    <h1 class="main-title">iNat Sync</h1>
-    <p class="subtitle">Gestionnaire d'observations & passerelle Notion</p>
-</div>
-""", unsafe_allow_html=True)
-
 # --- STATE MANAGEMENT ---
 if 'search_results' not in st.session_state:
     st.session_state.search_results = []
@@ -218,7 +209,9 @@ if 'custom_dates' not in st.session_state:
 if 'selection_states' not in st.session_state:
     st.session_state.selection_states = {} # Map ID -> bool
 if 'selected_users' not in st.session_state:
-    st.session_state.selected_users = [] # List of verified usernames
+    # Auto-fill from user_info if verified
+    default_u = st.session_state.get("inat_username", "")
+    st.session_state.selected_users = [default_u] if default_u else []
     st.session_state.last_selected_index = None
 if 'editor_key_version' not in st.session_state:
     st.session_state.editor_key_version = 0
@@ -232,49 +225,131 @@ has_secrets = True if NOTION_TOKEN else False
 supabase_client = None # Placeholder si le reste du code l'utilise encore, mais on devrait utiliser database.supabase
 from database import supabase as supabase_client # Alias pour compatibilité rétroactive locale
 
-
-# --- SIDEBAR (Connexion) ---
-with st.sidebar:
-    st.header("🔐 Connexion")
-    if not has_secrets:
-        st.warning("Mode manuel")
-        NOTION_TOKEN = st.text_input("Token Notion", type="password")
-        DATABASE_ID = st.text_input("ID Database")
-    
-    # On utilise le pseudo iNat lié au compte si disponible
-    default_inat = st.session_state.get("inat_username", "mycosphaera")
-    if not default_inat: default_inat = "mycosphaera"
-    
-    default_user = st.text_input("Utilisateur par défaut", value=default_inat)
-    
-    # Sanitize DATABASE_ID just in case user pasted a full URL
-    if DATABASE_ID and "notion.so" in DATABASE_ID:
-        # Extract ID part (either after last / or before ?)
-        try:
-             # Typical format: https://www.notion.so/{workspace_name}/{database_id}?v={view_id}
-             # or https://www.notion.so/{database_id}?v={view_id}
-             path_part = DATABASE_ID.split("?")[0]
-             DATABASE_ID = path_part.split("/")[-1]
-             # If exact ID is 32 chars +-, handled. If it has - it is also fine.
-        except:
-             pass 
 # --- NOTION CLIENT ---
 if NOTION_TOKEN:
-    # Restoring user's preferred version string but ensuring it works with 2022-06-28 behavior for properties
-    # User asked for 2025, but 2022 is the one returning properties. 
-    # We stick to 2022-06-28 for functional reasons as confirmed by debug.
     notion = Client(auth=NOTION_TOKEN, notion_version="2022-06-28")
 
-# --- INTERFACE ---
-tab1, tab2, tab3, tab4 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes", "📚 Explorer Notion"])
-params = {}
-run_search = False
-import_list = [] # Will hold IDs or Obs to import
+# --- NAVIGATION SIDEBAR ---
+with st.sidebar:
+    st.header(f"👤 {st.session_state.username}")
+    
+    # Profile Photo (if available in schema)
+    user_info = st.session_state.get('user_info', {})
+    photo_url = user_info.get('photo_url')
+    if photo_url: # Only if user added the column manually
+        st.image(photo_url, width=100)
+    
+    nav_mode = st.radio("Navigation", ["📊 Tableau de Bord", "👤 Mon Profil"], label_visibility="collapsed")
+    
+    st.divider()
+    if st.button("Se déconnecter"):
+        st.session_state.authenticated = False
+        st.rerun()
 
-with tab3:
-    with st.container(border=True):
-        st.markdown("### 🏷️ Générateur d'étiquettes PDF")
+# --- MAIN CONTENT SWITCHER ---
+
+if nav_mode == "👤 Mon Profil":
+    st.title("👤 Mon Profil")
+    st.info("Gérez vos informations personnelles et vos liens.")
+    
+    # Fetch latest data from verified DB record
+    u_data = st.session_state.user_info
+    
+    with st.form("profile_update_form"):
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            new_notion = st.text_input("Nom Notion", value=u_data.get("notion_user_name", ""), help="Utilisé pour pré-remplir les filtres Notion.")
+            new_inat = st.text_input("Utilisateur iNaturalist", value=u_data.get("inat_username", ""), help="Utilisé pour pré-remplir les recherches iNat.")
         
+        with col_p2:
+            # New Fields (Optional, might error if cols missing)
+            new_photo = st.text_input("URL Photo de Profil", value=u_data.get("photo_url", ""), placeholder="https://...")
+            new_bio = st.text_area("Bio / Description", value=u_data.get("bio", ""), placeholder="Mycologue passionné...")
+            new_fb = st.text_input("Lien Facebook", value=u_data.get("social_fb", ""), placeholder="https://facebook.com/...")
+            new_insta = st.text_input("Lien Instagram", value=u_data.get("social_insta", ""), placeholder="https://instagram.com/...")
+
+        save_profile = st.form_submit_button("Enregistrer les modifications")
+        
+        if save_profile:
+            # Prepare updates
+            updates = {
+                "notion_user_name": new_notion,
+                "inat_username": new_inat
+            }
+            # Try to add optional fields to update dict
+            # We blindly send them; if DB lacks columns, update_user_profile catches exception
+            if new_photo: updates["photo_url"] = new_photo
+            if new_bio:   updates["bio"] = new_bio
+            if new_fb:    updates["social_fb"] = new_fb
+            if new_insta: updates["social_insta"] = new_insta
+            
+            res = update_user_profile(u_data["id"], updates)
+            if res is True:
+                st.success("Profil mis à jour ! Re-connectez vous pour voir tous les changements.")
+                # Update local session mostly for display
+                st.session_state.user_info.update(updates)
+                st.session_state.username = new_notion
+                st.session_state.inat_username = new_inat
+                st.rerun()
+            else:
+                st.error(f"Erreur : {res}")
+                if "column" in str(res).lower() and "does not exist" in str(res).lower():
+                    st.warning("⚠️ Il semble que votre base Supabase n'ait pas les colonnes pour la photo ou la bio.")
+                    st.code("""ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS photo_url text;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS bio text;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS social_fb text;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS social_insta text;
+""", language="sql")
+
+elif nav_mode == "📊 Tableau de Bord":
+    # --- HEADER / DASHBOARD ---
+    st.markdown("""
+    <div class="brand-container">
+        <p class="brand-tag">MYCOSPHAERA</p>
+        <h1 class="main-title">iNat Sync</h1>
+        <p class="subtitle">Gestionnaire d'observations & passerelle Notion</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # --- DASHBOARD STATS ---
+    if st.session_state.authenticated:
+        st_col1, st_col2, st_col3 = st.columns(3)
+        
+        # Stat 1: iNat Total
+        with st_col1:
+            try:
+                # Quick fetch single ID
+                # We prioritize logged in user
+                target_user = st.session_state.inat_username or "mycosphaera"
+                # API Call with per_page=0 just to get total_results
+                stat_api = get_observations(user_id=target_user, per_page=0)
+                total_inat = stat_api.get("total_results", 0)
+                st.metric(label=f"Obs. iNaturalist ({target_user})", value=total_inat)
+            except:
+                st.metric(label="Obs. iNaturalist", value="--")
+
+        # Stat 2: Notion (Status)
+        with st_col2:
+            # We can't easily get total count without big query.
+            # Just show connected status
+            if notion:
+                st.metric(label="Notion", value="Connecté", delta="Prêt")
+            else:
+                st.metric(label="Notion", value="Déconnecté", delta_color="inverse")
+        
+        # Stat 3: User Role / Status
+        with st_col3:
+            st.metric(label="Compte", value="Membre")
+            
+        st.divider()
+
+    # --- INTERFACE (Tabs) ---
+    tab1, tab2, tab3, tab4 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes", "📚 Explorer Notion"])
+    params = {}
+    run_search = False
+    import_list = [] # Will hold IDs or Obs to import
+    
+    with tab3:        
         # Check if we have selected observations
         # We need "visible_obs" accessible here, but currently it's computed later in the script (lines 550+).
         # OR we rely on st.session_state.selection_states AND st.session_state.search_results.
