@@ -1415,8 +1415,8 @@ with tab1:
         # Limit Selection
         c_search, c_limit = st.columns([3, 1])
         # Changed label to distinguish from table filter
-        # Changed default to 200 (index 2) to show more results by default
-        limit_option = c_limit.selectbox("Max à récupérer (iNat)", [50, 100, 200, 500, 1000, "Tout (Attention !)"], index=2)
+        # Changed default to "Tout" (Index 5) per user request for "observations réelles"
+        limit_option = c_limit.selectbox("Max à récupérer (iNat)", [50, 100, 200, 500, 1000, "Tout (Attention !)"], index=5)
         
         if st.button("🔄 Réinitialiser la recherche", type="secondary"):
             st.session_state.search_results = []
@@ -1643,7 +1643,8 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
     limit_options = [50, 100, 200, "Tout"]
     
     with c_title:
-        st.subheader(f"📋 Aperçu d'importation (Inaturalist) ({len(df_main)} obs)")
+        total_avail = st.session_state.get('total_results_count', len(df_main))
+        st.subheader(f"📋 Aperçu d'importation (Inaturalist) ({total_avail} obs trouvées)")
     
     # Filter Widgets
     col_date, col_limit = st.columns([3, 1])
