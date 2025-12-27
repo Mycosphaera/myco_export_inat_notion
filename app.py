@@ -1585,7 +1585,16 @@ if run_search:
                 
                 # Helper for GPS
                 loc = r.get('location')
-                gps_txt = "Oui" if loc else "Non"
+                gps_txt = ""
+                if loc:
+                     try:
+                         # location is often "lat,lon" string or [lat, lon]
+                         if isinstance(loc, str): gps_txt = loc
+                         elif isinstance(loc, list): gps_txt = f"{loc[0]}, {loc[1]}"
+                     except: gps_txt = "Oui"
+                
+                # Helper for Description
+                desc = r.get('description', '') or ""
 
                 u_data.append({
                     "Import?": True,
@@ -1596,6 +1605,7 @@ if run_search:
                     "Mycologue": user_name,
                     "Tags": tag_str,
                     "GPS": gps_txt,
+                    "Description": desc,
                     "Collection": False,
                     "No° Fongarium": "",
                     "Lien": r.get('uri') or f"https://www.inaturalist.org/observations/{r['id']}"
@@ -1631,7 +1641,7 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
     limit_options = [50, 100, 200, "Tout"]
     
     with c_title:
-        st.subheader(f"📋 Tableau Unifié ({len(df_main)} obs)")
+        st.subheader(f"📋 Aperçu d'importation (Inaturalist) ({len(df_main)} obs)")
     
     # Filter Widgets
     col_date, col_limit = st.columns([3, 1])
@@ -1659,7 +1669,8 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
          df_display = df_filtered
 
     # Update Stats Display
-    c_stats.caption(f"Affichage : {len(df_display)} / {len(df_filtered)} filtrés / {len(df_main)} total")
+    # Use metric or markdown to bold Total
+    c_stats.markdown(f"**Total Extrait : {len(df_main)}** | Filtré : {len(df_filtered)} | Affiché : {len(df_display)}")
 
     # 2. BULK ACTIONS
     col_bulk_l, col_bulk_r = st.columns([1, 1])
@@ -1680,34 +1691,11 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
     col_magic, col_space = st.columns([1, 2])
     if col_magic.button("🪄 Générer les numéros", help="Remplit 'No° Fongarium' pour les lignes cochées 'Collection' (visible uniquement)"):
          # 1. SYNC STATE FIRST (Capture pending edits from widget before action)
-         # Problem: Widget state is for PREVIOUS render. We need to capture it.
-         # But if we click button, widget might reset if key changes. 
-         # We must rely on session state update form below loop first? 
-         # No, the button press triggers rerun. The edits ARE in session state under the key.
-         
          current_key = f"main_editor_{st.session_state.get('editor_key_version', 0)}"
          editor_state = st.session_state.get(current_key, {})
          edited_rows = editor_state.get("edited_rows", {})
          
          # Apply edits (Collection checkbox mainly) BEFORE logic
-         # Note: edited_rows keys are string-indices relative to the dataframe passed to editor.
-         # Since we pass df_display (which preserves original Index from df_main), 
-         # the indices in edited_rows SHOULD correspond to df_main indices if hide_index=True? 
-         # Streamlit Doc: "If hide_index=True, the keys in edited_rows are the 0-based row indices of the data being edited."
-         # WAIT. If hide_index=True, it uses display position (0 to N-1). 
-         # If hide_index=False, it uses the Index? 
-         # Actually, standard behavior: keys are the INDEX of the dataframe if meaningful?
-         # "The keys in the dictionary are the integer row indices of the edited rows" (0 to N-1 relative to displayed data usually).
-         # THIS IS DANGEROUS with filtering.
-         # Fix: Pass df_display.reset_index(drop=True) ? No, we need original index to update master.
-         # Best Practice: Do NOT hide index if we need to map back? Or verify 0-based behavior.
-         # Actually, let's look at `edited_df` returned object. It has the changes applied.
-         # But `edited_df` is only available AFTER the widget call in script execution order.
-         # We are INSIDE the button block which runs BEFORE the widget in this layout? 
-         # No, button is usually placed before or after.
-         # If button is clicked, the script reruns. `st.session_state[key]` holds the edits from THE LAST interaction.
-         # So we can parse it.
-         
          # CRITICAL: If we filter, 0-based index in editor refers to 0-th row of df_display.
          # We must map 0 -> df_display.index[0].
          
@@ -1725,7 +1713,6 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
                           if col in changes:
                               st.session_state.main_import_df.at[real_index, col] = changes[col]
               except Exception as e:
-                  # st.warning(f"Debug Edit Map Error: {e}")
                   pass
 
          if not prefix: 
@@ -1749,16 +1736,7 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
                      current_prefix = prefix
 
                  processed_count = 0
-                 # Iterate over VISIBLE (df_display) or ALL? 
-                 # User expectation: Generate for checked items. If filter is active, maybe only visible?
-                 # Let's do ALL to be safe/powerful, or Filtered? "Visible uniqment" in help text.
-                 # Let's iterate on df_display index.
-                 
-                 # Refetch df_display from master because we just updated it
-                 # (Re-apply filters efficiently)
-                 # Actually simpler: iterate df_main but check if it's in df_display.index if we want restriction.
-                 # User feedback implies they want control. Let's restrict to Visible for safety if filtered.
-                 
+                 # Iterate on visible indices
                  target_indices = df_display.index
                  
                  for idx in target_indices:
@@ -1799,12 +1777,13 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
             "Lieu": st.column_config.TextColumn("Lieu", disabled=True),
             "Mycologue": st.column_config.TextColumn("User", disabled=True, width="medium"),
             "Tags": st.column_config.TextColumn("Tags", disabled=True, width="medium"),
-            "GPS": st.column_config.TextColumn("GPS", disabled=True, width="small"),
+            "GPS": st.column_config.TextColumn("GPS", disabled=True, width="medium"),
+            "Description": st.column_config.TextColumn("Description", disabled=True, width="large"),
             "Collection": st.column_config.CheckboxColumn("Collection?", default=False, width="small"),
             "No° Fongarium": st.column_config.TextColumn("No° Fongarium", width="medium"),
             "Lien": st.column_config.LinkColumn("Lien", display_text="Ouvrir", width="small")
         },
-        disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "GPS", "Lien"]
+        disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "GPS", "Description", "Lien"]
     )
     
     # CRITICAL: SYNC EDITS BACK TO MASTER
