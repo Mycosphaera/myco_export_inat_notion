@@ -1410,7 +1410,48 @@ with tab1:
                 else:
                     st.info("Aucune date ajoutée.")
 
-        st.divider()
+
+# --- CALLBACKS ---
+def sync_editor_changes():
+    """
+    Callback to sync changes from data_editor back to main_import_df immediately.
+    Handles filtered views by using stored indices.
+    """
+    try:
+        current_key = f"main_editor_{st.session_state.get('editor_key_version', 0)}"
+        if current_key not in st.session_state:
+            return
+
+        edited_rows = st.session_state[current_key].get("edited_rows", {})
+        added_rows = st.session_state[current_key].get("added_rows", [])
+        deleted_rows = st.session_state[current_key].get("deleted_rows", [])
+        
+        # Get the indices of the currently displayed data
+        # We must assume this was stored BEFORE the callback runs (i.e. in the previous run or just before?)
+        # Wait, on_change runs BEFORE the script rerun completes, but AFTER the interaction.
+        # We need the indices that WERE displayed when the edit happened.
+        # So we must store them in session_state every time we render the editor.
+        
+        view_indices = st.session_state.get("current_view_indices", [])
+        
+        if not edited_rows:
+            return
+
+        for row_idx_str, changes in edited_rows.items():
+            row_pos = int(row_idx_str)
+            if 0 <= row_pos < len(view_indices):
+                real_index = view_indices[row_pos]
+                # Update Master DF
+                for col, value in changes.items():
+                    st.session_state.main_import_df.at[real_index, col] = value
+                    
+        # Force a "touch" to ensure persistence 
+        # (Pandas modification in session state is usually detected, but being safe)
+        
+    except Exception as e:
+        print(f"Sync Error: {e}")
+
+st.divider()
 
         # Limit Selection
         c_search, c_limit = st.columns([3, 1])
@@ -1711,10 +1752,15 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
     # --- MAGIC BUTTON (Unified) ---
     col_magic, col_space = st.columns([1, 2])
     if col_magic.button("🪄 Générer les numéros", help="Remplit 'No° Fongarium' pour les lignes cochées 'Collection' (visible uniquement)"):
+         # DEBUG
+         st.write("Button Clicked")
+         st.write(f"Display Len: {len(df_display)}")
+         
          # 1. SYNC STATE FIRST (Capture pending edits from widget before action)
          current_key = f"main_editor_{st.session_state.get('editor_key_version', 0)}"
          editor_state = st.session_state.get(current_key, {})
          edited_rows = editor_state.get("edited_rows", {})
+         st.write(f"Edited Rows: {edited_rows}")
          
          # Apply edits (Collection checkbox mainly) BEFORE logic
          # CRITICAL: If we filter, 0-based index in editor refers to 0-th row of df_display.
@@ -1723,7 +1769,8 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
          user_info = st.session_state.get('user_info', {})
          prefix = user_info.get("fongarium_prefix")
          
-         # Apply edits first
+         # Apply edits first (Manual Patch)
+         # Note: This might be redundant if the main sync works, but harmless if correct.
          for row_idx_str, changes in edited_rows.items():
               try:
                   row_pos = int(row_idx_str)
@@ -1736,6 +1783,9 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
               except Exception as e:
                   pass
 
+         # Check how many are collected
+         # count_coll = st.session_state.main_import_df.loc[df_display.index, "Collection"].sum()
+         # st.write(f"Collection Count in Scope: {count_coll}")
          if not prefix: 
              st.error("Configurez votre préfixe dans 'Mon Profil' !")
          else:
@@ -1785,9 +1835,13 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
     else:
          df_display_fresh = df_filtered_fresh
          
+    # Store indices for callback to reference
+    st.session_state.current_view_indices = df_display_fresh.index
+         
     edited_df = st.data_editor(
         df_display_fresh,
         key=f"main_editor_{st.session_state.editor_key_version}",
+        on_change=sync_editor_changes,
         use_container_width=True,
         hide_index=True,
         column_config={
@@ -1817,18 +1871,7 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
     # If the input had an index, the output HAS THE SAME INDEX.
     # So we can just use `update`.
     
-    if not edited_df.equals(df_display_fresh):
-        # Explicitly assign columns to Ensure persistence
-        # We only need to sync editable columns
-        cols_to_sync = ["Import?", "Collection", "No° Fongarium"]
-        # Ensure we only sync valid indices (though they should match)
-        common_indices = edited_df.index.intersection(st.session_state.main_import_df.index)
-        
-        if not common_indices.empty:
-            st.session_state.main_import_df.loc[common_indices, cols_to_sync] = edited_df.loc[common_indices, cols_to_sync]
-            
-        # Optional: Uncomment if strict sync is needed, but might cause double-reload
-        # st.rerun()
+
 
     # --- IMPORT BUTTON ---
     col_dup, col_imp = st.columns([1, 1])
