@@ -1763,19 +1763,24 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
          user_info = st.session_state.get('user_info', {})
          prefix = user_info.get("fongarium_prefix")
          
-         # Apply edits first (Manual Patch)
-         # Note: This might be redundant if the main sync works, but harmless if correct.
+         # Fallback Sync: Manually apply edits just in case callback missed
+         # This handles cases where on_change didn't fire or view indices were stale
          for row_idx_str, changes in edited_rows.items():
               try:
                   row_pos = int(row_idx_str)
-                  # Start ID in Master DF
                   if row_pos < len(df_display):
                       real_index = df_display.index[row_pos]
-                      for col in ["Collection", "Import?", "No° Fongarium"]:
-                          if col in changes:
-                              st.session_state.main_import_df.at[real_index, col] = changes[col]
+                      for col, val in changes.items():
+                          st.session_state.main_import_df.at[real_index, col] = val
               except Exception as e:
                   pass
+
+         # DEBUG: Check count
+         count_coll = st.session_state.main_import_df.loc[df_display.index, "Collection"].sum()
+         # st.write(f"DEBUG: 'Collection' checked count: {count_coll}")
+         
+         if count_coll == 0:
+             st.warning("Aucune ligne cochée 'Collection'. Veuillez cocher la case Collection.")
 
          # Check how many are collected
          # count_coll = st.session_state.main_import_df.loc[df_display.index, "Collection"].sum()
