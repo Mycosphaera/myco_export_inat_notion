@@ -177,6 +177,38 @@ if not st.session_state.authenticated:
 # 🏰 BIENVENUE DANS LA CITADELLE (Ton App commence ici)
 # =========================================================
 
+
+# --- CALLBACKS ---
+def sync_editor_changes():
+    """
+    Callback to sync changes from data_editor back to main_import_df immediately.
+    Handles filtered views by using stored indices.
+    """
+    try:
+        current_key = f"main_editor_{st.session_state.get('editor_key_version', 0)}"
+        if current_key not in st.session_state:
+            return
+
+        edited_rows = st.session_state[current_key].get("edited_rows", {})
+        added_rows = st.session_state[current_key].get("added_rows", [])
+        deleted_rows = st.session_state[current_key].get("deleted_rows", [])
+        
+        view_indices = st.session_state.get("current_view_indices", [])
+        
+        if not edited_rows:
+            return
+
+        for row_idx_str, changes in edited_rows.items():
+            row_pos = int(row_idx_str)
+            if 0 <= row_pos < len(view_indices):
+                real_index = view_indices[row_pos]
+                # Update Master DF
+                for col, value in changes.items():
+                    st.session_state.main_import_df.at[real_index, col] = value
+                    
+    except Exception as e:
+        print(f"Sync Error: {e}")
+
 # --- HELPER FUNCTIONS ---
 @st.dialog("🍄 Détails de l'observation")
 def show_details(obs_data):
@@ -1411,47 +1443,9 @@ with tab1:
                     st.info("Aucune date ajoutée.")
 
 
-# --- CALLBACKS ---
-def sync_editor_changes():
-    """
-    Callback to sync changes from data_editor back to main_import_df immediately.
-    Handles filtered views by using stored indices.
-    """
-    try:
-        current_key = f"main_editor_{st.session_state.get('editor_key_version', 0)}"
-        if current_key not in st.session_state:
-            return
 
-        edited_rows = st.session_state[current_key].get("edited_rows", {})
-        added_rows = st.session_state[current_key].get("added_rows", [])
-        deleted_rows = st.session_state[current_key].get("deleted_rows", [])
-        
-        # Get the indices of the currently displayed data
-        # We must assume this was stored BEFORE the callback runs (i.e. in the previous run or just before?)
-        # Wait, on_change runs BEFORE the script rerun completes, but AFTER the interaction.
-        # We need the indices that WERE displayed when the edit happened.
-        # So we must store them in session_state every time we render the editor.
-        
-        view_indices = st.session_state.get("current_view_indices", [])
-        
-        if not edited_rows:
-            return
 
-        for row_idx_str, changes in edited_rows.items():
-            row_pos = int(row_idx_str)
-            if 0 <= row_pos < len(view_indices):
-                real_index = view_indices[row_pos]
-                # Update Master DF
-                for col, value in changes.items():
-                    st.session_state.main_import_df.at[real_index, col] = value
-                    
-        # Force a "touch" to ensure persistence 
-        # (Pandas modification in session state is usually detected, but being safe)
-        
-    except Exception as e:
-        print(f"Sync Error: {e}")
-
-st.divider()
+        st.divider()
 
         # Limit Selection
         c_search, c_limit = st.columns([3, 1])
