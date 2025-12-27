@@ -1818,10 +1818,17 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
     # So we can just use `update`.
     
     if not edited_df.equals(df_display_fresh):
-        # Update modified rows only to save perf? Or just update all common indices?
-        # main_import_df.update(edited_df) overwrites intersecting cells.
-        st.session_state.main_import_df.update(edited_df)
-        # Note: update() modifies in place.
+        # Explicitly assign columns to Ensure persistence
+        # We only need to sync editable columns
+        cols_to_sync = ["Import?", "Collection", "No° Fongarium"]
+        # Ensure we only sync valid indices (though they should match)
+        common_indices = edited_df.index.intersection(st.session_state.main_import_df.index)
+        
+        if not common_indices.empty:
+            st.session_state.main_import_df.loc[common_indices, cols_to_sync] = edited_df.loc[common_indices, cols_to_sync]
+            
+        # Optional: Uncomment if strict sync is needed, but might cause double-reload
+        # st.rerun()
 
     # --- IMPORT BUTTON ---
     col_dup, col_imp = st.columns([1, 1])
