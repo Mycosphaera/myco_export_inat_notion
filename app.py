@@ -1573,13 +1573,29 @@ if run_search:
                 # We can't put a functional link column easily in basic data_editor without using LinkColumn config.
                 # We will store the full URL and format it in column_config.
                 
+                # Helper for Tags
+                tags = r.get('tags', []) 
+                tag_list = []
+                if tags:
+                    for t in tags:
+                        if isinstance(t, dict): tag_list.append(t.get('tag', ''))
+                        elif isinstance(t, str): tag_list.append(t)
+                        else: tag_list.append(str(t))
+                tag_str = ", ".join(tag_list)
+                
+                # Helper for GPS
+                loc = r.get('location')
+                gps_txt = "Oui" if loc else "Non"
+
                 u_data.append({
                     "Import?": True,
-                    "ID": str(r['id']), # String to avoid commas
+                    "ID": str(r['id']), 
                     "Taxon": r.get('taxon', {}).get('name') or "Inconnu",
                     "Date": date_str,
                     "Lieu": r.get('place_guess') or "Inconnu",
                     "Mycologue": user_name,
+                    "Tags": tag_str,
+                    "GPS": gps_txt,
                     "Collection": False,
                     "No° Fongarium": "",
                     "Lien": r.get('uri') or f"https://www.inaturalist.org/observations/{r['id']}"
@@ -1604,31 +1620,114 @@ if run_search:
 if 'main_import_df' in st.session_state and not st.session_state.main_import_df.empty:
     st.divider()
     
-    c_title, c_stats = st.columns([2, 1])
-    total_disp = st.session_state.get('total_results_count', len(st.session_state.main_import_df))
-    c_title.subheader(f"📋 Tableau Unifié ({len(st.session_state.main_import_df)} obs)")
+    # 1. FILTERS & CONTROLS
+    c_title, c_stats = st.columns([2, 2])
     
+    # Calculate unique dates for filter
+    df_main = st.session_state.main_import_df
+    all_dates = sorted(df_main['Date'].unique().tolist(), reverse=True)
+    
+    # Limit Options
+    limit_options = [50, 100, 200, "Tout"]
+    
+    with c_title:
+        st.subheader(f"📋 Tableau Unifié ({len(df_main)} obs)")
+    
+    # Filter Widgets
+    col_date, col_limit = st.columns([3, 1])
+    
+    # Date Filter (Pills)
+    selected_dates = col_date.pills(
+        "Filtrer par date",
+        options=all_dates,
+        selection_mode="multi",
+        default=[]
+    )
+    
+    # Limit Filter
+    selected_limit = col_limit.selectbox("Afficher", options=limit_options, index=0)
+    
+    # Apply Filters
+    df_filtered = df_main.copy()
+    if selected_dates:
+        df_filtered = df_filtered[df_filtered['Date'].isin(selected_dates)]
+    
+    # Slice for Display (Limit)
+    if selected_limit != "Tout":
+         df_display = df_filtered.head(int(selected_limit))
+    else:
+         df_display = df_filtered
+
+    # Update Stats Display
+    c_stats.caption(f"Affichage : {len(df_display)} / {len(df_filtered)} filtrés / {len(df_main)} total")
+
+    # 2. BULK ACTIONS
+    col_bulk_l, col_bulk_r = st.columns([1, 1])
+    if col_bulk_l.button("✅ Tout cocher (Visible)", help="Coche 'Importer' pour toutes les lignes affichées"):
+        # Update Master DF based on Visible Indices
+        visible_indices = df_display.index
+        st.session_state.main_import_df.loc[visible_indices, "Import?"] = True
+        st.session_state.editor_key_version = st.session_state.get('editor_key_version', 0) + 1
+        st.rerun()
+        
+    if col_bulk_r.button("🚫 Tout décocher (Visible)", help="Décoche 'Importer' pour toutes les lignes affichées"):
+        visible_indices = df_display.index
+        st.session_state.main_import_df.loc[visible_indices, "Import?"] = False
+        st.session_state.editor_key_version = st.session_state.get('editor_key_version', 0) + 1
+        st.rerun()
+
     # --- MAGIC BUTTON (Unified) ---
-    col_magic, col_space = st.columns([1, 3])
-    if col_magic.button("🪄 Générer les numéros", help="Remplit 'No° Fongarium' pour les lignes cochées 'Collection'"):
-         # 1. SYNC STATE
+    col_magic, col_space = st.columns([1, 2])
+    if col_magic.button("🪄 Générer les numéros", help="Remplit 'No° Fongarium' pour les lignes cochées 'Collection' (visible uniquement)"):
+         # 1. SYNC STATE FIRST (Capture pending edits from widget before action)
+         # Problem: Widget state is for PREVIOUS render. We need to capture it.
+         # But if we click button, widget might reset if key changes. 
+         # We must rely on session state update form below loop first? 
+         # No, the button press triggers rerun. The edits ARE in session state under the key.
+         
          current_key = f"main_editor_{st.session_state.get('editor_key_version', 0)}"
          editor_state = st.session_state.get(current_key, {})
          edited_rows = editor_state.get("edited_rows", {})
          
-         df_main = st.session_state.main_import_df
+         # Apply edits (Collection checkbox mainly) BEFORE logic
+         # Note: edited_rows keys are string-indices relative to the dataframe passed to editor.
+         # Since we pass df_display (which preserves original Index from df_main), 
+         # the indices in edited_rows SHOULD correspond to df_main indices if hide_index=True? 
+         # Streamlit Doc: "If hide_index=True, the keys in edited_rows are the 0-based row indices of the data being edited."
+         # WAIT. If hide_index=True, it uses display position (0 to N-1). 
+         # If hide_index=False, it uses the Index? 
+         # Actually, standard behavior: keys are the INDEX of the dataframe if meaningful?
+         # "The keys in the dictionary are the integer row indices of the edited rows" (0 to N-1 relative to displayed data usually).
+         # THIS IS DANGEROUS with filtering.
+         # Fix: Pass df_display.reset_index(drop=True) ? No, we need original index to update master.
+         # Best Practice: Do NOT hide index if we need to map back? Or verify 0-based behavior.
+         # Actually, let's look at `edited_df` returned object. It has the changes applied.
+         # But `edited_df` is only available AFTER the widget call in script execution order.
+         # We are INSIDE the button block which runs BEFORE the widget in this layout? 
+         # No, button is usually placed before or after.
+         # If button is clicked, the script reruns. `st.session_state[key]` holds the edits from THE LAST interaction.
+         # So we can parse it.
          
-         # Apply edits (Collection checkbox mainly)
-         for idx, changes in edited_rows.items():
-             try:
-                 idx = int(idx)
-                 for col in ["Collection", "Import?", "No° Fongarium"]:
-                     if col in changes:
-                         df_main.at[idx, col] = changes[col]
-             except: pass
-
+         # CRITICAL: If we filter, 0-based index in editor refers to 0-th row of df_display.
+         # We must map 0 -> df_display.index[0].
+         
          user_info = st.session_state.get('user_info', {})
          prefix = user_info.get("fongarium_prefix")
+         
+         # Apply edits first
+         for row_idx_str, changes in edited_rows.items():
+              try:
+                  row_pos = int(row_idx_str)
+                  # Start ID in Master DF
+                  if row_pos < len(df_display):
+                      real_index = df_display.index[row_pos]
+                      for col in ["Collection", "Import?", "No° Fongarium"]:
+                          if col in changes:
+                              st.session_state.main_import_df.at[real_index, col] = changes[col]
+              except Exception as e:
+                  # st.warning(f"Debug Edit Map Error: {e}")
+                  pass
+
          if not prefix: 
              st.error("Configurez votre préfixe dans 'Mon Profil' !")
          else:
@@ -1650,14 +1749,26 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
                      current_prefix = prefix
 
                  processed_count = 0
-                 for idx, row in df_main.iterrows():
+                 # Iterate over VISIBLE (df_display) or ALL? 
+                 # User expectation: Generate for checked items. If filter is active, maybe only visible?
+                 # Let's do ALL to be safe/powerful, or Filtered? "Visible uniqment" in help text.
+                 # Let's iterate on df_display index.
+                 
+                 # Refetch df_display from master because we just updated it
+                 # (Re-apply filters efficiently)
+                 # Actually simpler: iterate df_main but check if it's in df_display.index if we want restriction.
+                 # User feedback implies they want control. Let's restrict to Visible for safety if filtered.
+                 
+                 target_indices = df_display.index
+                 
+                 for idx in target_indices:
+                     row = st.session_state.main_import_df.loc[idx]
                      if row["Collection"] and not row["No° Fongarium"]:
                          code = f"{current_prefix}{current_num:0{num_len}d}"
-                         df_main.at[idx, "No° Fongarium"] = code
+                         st.session_state.main_import_df.at[idx, "No° Fongarium"] = code
                          current_num += 1
                          processed_count += 1
                  
-                 st.session_state.main_import_df = df_main
                  st.success(f"{processed_count} numéros générés !")
                  st.session_state.editor_key_version = st.session_state.get('editor_key_version', 0) + 1
                  st.rerun()
@@ -1665,8 +1776,18 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
     # --- DATA EDITOR ---
     if 'editor_key_version' not in st.session_state: st.session_state.editor_key_version = 0
     
+    # We must reset the dataframe to be displayed to reflect updates from buttons/generations
+    # Re-calc df_display from fresh master state
+    df_filtered_fresh = st.session_state.main_import_df.copy()
+    if selected_dates:
+         df_filtered_fresh = df_filtered_fresh[df_filtered_fresh['Date'].isin(selected_dates)]
+    if selected_limit != "Tout":
+         df_display_fresh = df_filtered_fresh.head(int(selected_limit))
+    else:
+         df_display_fresh = df_filtered_fresh
+         
     edited_df = st.data_editor(
-        st.session_state.main_import_df,
+        df_display_fresh,
         key=f"main_editor_{st.session_state.editor_key_version}",
         use_container_width=True,
         hide_index=True,
@@ -1677,22 +1798,39 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
             "Date": st.column_config.TextColumn("Date", disabled=True, width="small"),
             "Lieu": st.column_config.TextColumn("Lieu", disabled=True),
             "Mycologue": st.column_config.TextColumn("User", disabled=True, width="medium"),
+            "Tags": st.column_config.TextColumn("Tags", disabled=True, width="medium"),
+            "GPS": st.column_config.TextColumn("GPS", disabled=True, width="small"),
             "Collection": st.column_config.CheckboxColumn("Collection?", default=False, width="small"),
             "No° Fongarium": st.column_config.TextColumn("No° Fongarium", width="medium"),
             "Lien": st.column_config.LinkColumn("Lien", display_text="Ouvrir", width="small")
         },
-        disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Lien"]
+        disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "GPS", "Lien"]
     )
     
-    # Sync edits back to Master DF
-    st.session_state.main_import_df = edited_df
+    # CRITICAL: SYNC EDITS BACK TO MASTER
+    # `edited_df` contains the state of the editor. 
+    # Because we are filtering, `edited_df` is a subset. 
+    # We must update `main_import_df` using the indices from `edited_df`.
+    # Since `df_display` preserved the original indices, `edited_df` (which is returned by data_editor) 
+    # SHOULD preserve them IF we don't mess it up. 
+    # Wait, `edited_df` is a Pandas DataFrame returning the data in the editor.
+    # If the input had an index, the output HAS THE SAME INDEX.
+    # So we can just use `update`.
+    
+    if not edited_df.equals(df_display_fresh):
+        # Update modified rows only to save perf? Or just update all common indices?
+        # main_import_df.update(edited_df) overwrites intersecting cells.
+        st.session_state.main_import_df.update(edited_df)
+        # Note: update() modifies in place.
 
     # --- IMPORT BUTTON ---
     col_dup, col_imp = st.columns([1, 1])
     
+    # We need to map `main_import_df` (Master) where Import?=True for the final action
     if col_imp.button("📤 Importer vers Notion", type="primary"):
-        # Filter: Only "Import?" == True
-        to_import_df = edited_df[edited_df["Import?"] == True]
+        # Filter Master, not just visible
+        master_df = st.session_state.main_import_df
+        to_import_df = master_df[master_df["Import?"] == True]
         
         if to_import_df.empty:
             st.warning("Aucune observation cochée pour l'import.")
