@@ -1673,7 +1673,8 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
 
     # Update Stats Display
     # Use metric or markdown to bold Total
-    c_stats.markdown(f"**Total Extrait : {len(df_main)}** | Filtré : {len(df_filtered)} | Affiché : {len(df_display)}")
+    total_available = st.session_state.get('total_results_count', '?')
+    c_stats.markdown(f"**Extrait : {len(df_main)} / {total_available} (Total)** | Filtré : {len(df_filtered)} | Affiché : {len(df_display)}")
 
     # 2. BULK ACTIONS
     col_bulk_l, col_bulk_r = st.columns([1, 1])
