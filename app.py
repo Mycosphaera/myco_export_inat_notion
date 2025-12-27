@@ -254,7 +254,7 @@ def count_user_notion_obs(token, db_id, target_user):
         
     return total_count
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
     """
     Récupère le dernier numéro de fongarium attribué pour un utilisateur donné.
@@ -1835,6 +1835,8 @@ if st.session_state.search_results:
                 
                 # Check if we need to initialize or rebuild the preview dataframe
                 if 'preview_df' not in st.session_state or st.session_state.get('preview_ids_hash') != current_prev_hash:
+                    # Reset version on new selection
+                    st.session_state.editor_key_version = st.session_state.get('editor_key_version', 0) + 1
                     p_data = []
                     for obs in st.session_state.search_results:
                         if obs['id'] in preview_ids:
@@ -1880,7 +1882,8 @@ if st.session_state.search_results:
                              # The data_editor doesn't update st.session_state.preview_df automatically in real-time for Python access unless 'num_rows' is dynamic or we parse the edits manually.
                              # We must parse st.session_state["fongarium_preview_editor"]["edited_rows"]
                              
-                             editor_state = st.session_state.get("fongarium_preview_editor", {})
+                             current_key = f"fongarium_preview_editor_{st.session_state.get('editor_key_version', 0)}"
+                             editor_state = st.session_state.get(current_key, {})
                              edited_rows = editor_state.get("edited_rows", {})
                              
                              # Apply edits to df_p before processing
@@ -1899,12 +1902,16 @@ if st.session_state.search_results:
                              
                              st.session_state.preview_df = df_p
                              st.success(f"{processed_count} numéros générés !")
+                             st.session_state.editor_key_version = st.session_state.get('editor_key_version', 0) + 1
                              st.rerun()
 
                 # Display Editor
+                if 'editor_key_version' not in st.session_state:
+                    st.session_state.editor_key_version = 0
+                    
                 edited_preview = st.data_editor(
                      st.session_state.preview_df,
-                     key="fongarium_preview_editor",
+                     key=f"fongarium_preview_editor_{st.session_state.editor_key_version}",
                      column_config={
                          "ID": st.column_config.TextColumn("ID", disabled=True, width="small"),
                          "Taxon": st.column_config.TextColumn("Taxon", disabled=True),
