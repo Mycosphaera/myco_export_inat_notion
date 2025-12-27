@@ -340,6 +340,62 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
         
     return None, None
 
+@st.cache_data(ttl=300, show_spinner="Chargement Notion...")
+def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
+    """
+    Cached function to fetch Notion data.
+    notion_filter_and: The list of AND clauses for the filter.
+    Returns: list of results
+    """
+    if not token or not db_id: return []
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    
+    api_url_query = f"https://api.notion.com/v1/databases/{db_id}/query"
+    
+    all_results = []
+    has_more = True
+    next_cursor = None
+    
+    # Safety Cap for recursion to avoid timeouts in cache
+    # But max_fetch controls this.
+    
+    while has_more and len(all_results) < max_fetch:
+        # Payload
+        query_payload = {
+            "page_size": min(100, max_fetch - len(all_results)), # Max 100 per API call
+            "sorts": [{"timestamp": "created_time", "direction": "descending"}]
+        }
+        
+        if notion_filter_and:
+             query_payload["filter"] = {"and": notion_filter_and}
+             
+        if next_cursor:
+            query_payload["start_cursor"] = next_cursor
+        
+        resp_query = requests.post(api_url_query, headers=headers, json=query_payload)
+        
+        if resp_query.status_code != 200:
+             # st.error? We are in a cached function. Returning error might be bad.
+             # Return what we have.
+             print(f"Fetch Error: {resp_query.text}")
+             break
+        else:
+            data = resp_query.json()
+            batch = data.get("results", [])
+            all_results.extend(batch)
+            
+            has_more = data.get("has_more", False)
+            next_cursor = data.get("next_cursor")
+            
+            if max_fetch <= 100 and len(all_results) >= max_fetch: break
+            
+    return all_results
+
 def constants_extract_text(prop_obj):
     # Helper to extract text from Rich Text property safely
     if not prop_obj: return ""
@@ -844,82 +900,36 @@ with tab4:
                         if or_clause["or"]:
                              notion_filter["and"].append(or_clause)
 
-                # Query Loop (Pagination)
-                api_url_query = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+                # Query Loop (Optimized via Cache)
+                # We need to handle the "Month Filter" logic which is Python-side.
+                # To purely cache the extensive API call, we just fetch by Date/Year/ID/Matches
+                # And apply Month filter after (fast).
                 
+                # We pass 'notion_filter["and"]' which is a list of clauses.
+                all_results_raw = fetch_notion_data(NOTION_TOKEN, DATABASE_ID, notion_filter["and"], max_fetch)
+                
+                # POST-PROCESSING: Month Filter (Python Side)
                 all_results = []
-                has_more = True
-                next_cursor = None
-                
-                # Progress bar if "Tout" is selected or limit > 100
-                prog_bar = st.empty()
-                if max_fetch > 100:
-                    prog_text = st.empty()
-                
-                while has_more and len(all_results) < max_fetch:
-                    # Payload
-                    query_payload = {
-                        "page_size": min(100, max_fetch - len(all_results)), # Max 100 per API call
-                        "sorts": [{"timestamp": "created_time", "direction": "descending"}]
-                    }
-                    if notion_filter["and"]:
-                        query_payload["filter"] = notion_filter
-                    if next_cursor:
-                        query_payload["start_cursor"] = next_cursor
-                    
-                    if max_fetch > 100:
-                        prog_text.caption(f"Chargement... ({len(all_results)} trouvés)")
-                    
-                    resp_query = requests.post(api_url_query, headers=headers, json=query_payload)
-                    
-                    if resp_query.status_code != 200:
-                         st.error(f"Erreur Query {resp_query.status_code}: {resp_query.text}")
-                         break
-                    else:
-                        data = resp_query.json()
-                        batch = data.get("results", [])
+                if sel_months and not sel_date:
+                     target_month_nums = [months_map[m] for m in sel_months]
+                     for p in all_results_raw:
+                        d_str = ""
+                        if "Date" in p["properties"] and p["properties"]["Date"]["date"]:
+                            d_str = p["properties"]["Date"]["date"]["start"]
                         
-                        # Python Filter: Months
-                        # If months selected, we filter the batch before adding
-                        if sel_months and not sel_date: # Only if specific date not overriden
-                            filtered_batch = []
-                            target_month_nums = [months_map[m] for m in sel_months]
-                            
-                            for p in batch:
-                                d_str = ""
-                                if "Date" in p["properties"] and p["properties"]["Date"]["date"]:
-                                    d_str = p["properties"]["Date"]["date"]["start"]
-                                
-                                if d_str:
-                                    try:
-                                        # d_str is YYYY-MM-DD
-                                        m_num = int(d_str.split("-")[1])
-                                        if m_num in target_month_nums:
-                                            filtered_batch.append(p)
-                                    except:
-                                        pass # Invalid date format
-                                else:
-                                    pass # No date, skip?
-                            
-                            # Note: Pagination logic issue here. 
-                            # If we filter by Python, we might fetch 100, keep 0, then stop loop if limit reached?
-                            # No, limit check 'len(all_results)' vs 'max_fetch'.
-                            # If we filter out, len(all_results) doesn't grow, so we continue fetching.
-                            # BUT careful: 'max_fetch - len(all_results)' might request 100, get 100, keep 0.
-                            # We must continue until Notion says 'has_more' is False OR we filled our bucket.
-                            
-                            all_results.extend(filtered_batch)
+                        if d_str:
+                            try:
+                                m_num = int(d_str.split("-")[1])
+                                if m_num in target_month_nums:
+                                    all_results.append(p)
+                            except: pass
                         else:
-                            all_results.extend(batch)
-                        
-                        has_more = data.get("has_more", False)
-                        next_cursor = data.get("next_cursor")
-                        
-                        if max_fetch <= 100: # Simple mode, stop after first page if limited
-                            if len(all_results) >= max_fetch: break
+                             pass
+                else:
+                    all_results = all_results_raw
                 
                 if max_fetch > 100:
-                    prog_text.empty() # Clear text
+                    prog_text.empty() # Clear text (if it was used)
                 
                 rows_notion = []
                 # Process results... (Use all_results)
