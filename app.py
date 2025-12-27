@@ -1672,9 +1672,25 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
          df_display = df_filtered
 
     # Update Stats Display
-    # Use metric or markdown to bold Total
     total_available = st.session_state.get('total_results_count', '?')
-    c_stats.markdown(f"**Extrait : {len(df_main)} / {total_available} (Total)** | Filtré : {len(df_filtered)} | Affiché : {len(df_display)}")
+    
+    # Calculate Selection stats on VISIBLE rows
+    selection_count = df_display['Import?'].sum()
+    visible_count = len(df_display)
+    
+    # Styled display
+    c_stats.markdown(
+        f"""
+        <div style="display: flex; gap: 15px; font-size: 0.9em; align-items: center;">
+            <div>📥 <b>Extrait:</b> {len(df_main)} / {total_available} (Total)</div>
+            <div>👁️ <b>Affiché:</b> {visible_count}</div>
+            <div style="color: {'green' if selection_count > 0 else 'red'};">
+                ✅ <b>Sélectionné (Import):</b> {selection_count} / {visible_count}
+            </div>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
 
     # 2. BULK ACTIONS
     col_bulk_l, col_bulk_r = st.columns([1, 1])
