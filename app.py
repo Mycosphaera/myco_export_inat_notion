@@ -1414,7 +1414,9 @@ with tab1:
 
         # Limit Selection
         c_search, c_limit = st.columns([3, 1])
-        limit_option = c_limit.selectbox("Nombre de résultats", [50, 100, 200, 500, "Tout (Attention !)"], index=0)
+        # Changed label to distinguish from table filter
+        # Changed default to 200 (index 2) to show more results by default
+        limit_option = c_limit.selectbox("Max à récupérer (iNat)", [50, 100, 200, 500, 1000, "Tout (Attention !)"], index=2)
         
         if st.button("🔄 Réinitialiser la recherche", type="secondary"):
             st.session_state.search_results = []
@@ -1655,7 +1657,8 @@ if 'main_import_df' in st.session_state and not st.session_state.main_import_df.
     )
     
     # Limit Filter
-    selected_limit = col_limit.selectbox("Afficher", options=limit_options, index=0)
+    # Default to "Tout" (Index 3) to show all fetched results immediately
+    selected_limit = col_limit.selectbox("Afficher", options=limit_options, index=3)
     
     # Apply Filters
     df_filtered = df_main.copy()
