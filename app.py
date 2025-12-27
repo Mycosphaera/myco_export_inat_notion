@@ -1889,7 +1889,11 @@ if st.session_state.search_results:
                              # Apply edits to df_p before processing
                              for idx, changes in edited_rows.items():
                                  if "Collection" in changes:
-                                     df_p.at[idx, "Collection"] = changes["Collection"]
+                                     # Ensure idx is int for valid access
+                                     try:
+                                         idx = int(idx)
+                                         df_p.at[idx, "Collection"] = changes["Collection"]
+                                     except: pass
                                      
                              
                              processed_count = 0
@@ -2085,6 +2089,25 @@ if st.session_state.search_results:
                          obs_id_str = str(row["ID"]).replace(",", "") # Safety
                          if raw_code:
                              fongarium_map[str(obs_id_str)] = raw_code
+                             
+                # Resolve Notion Fongarium Column Name (Dynamic)
+                # We reuse the schema check we did earlier if available, or fetch it?
+                # Actually we can just do a robust check again or use a hardcoded list of variations.
+                # Let's use the 'props_schema' if available in scope. 
+                # Wait, 'props_schema' is defined in the top logic but might be out of scope here if we are in a button block? 
+                # Actually, props_schema is defined in the main 'if NOTION_TOKEN...' block which wraps everything including this button.
+                # But to be safe (and because indentation is tricky without seeing full file), let's re-verify or use a robust fallback list.
+                # Ideally, we should check `props_schema` which was populated at line 622.
+                
+                fong_col_imp_name = "No° fongarium" # Default
+                if 'props_schema' in locals() and props_schema:
+                    fong_candidates = ["No° fongarium", "No fongarium", "Numéro fongarium", "Code fongarium"]
+                    for cand in fong_candidates:
+                        if cand in props_schema:
+                            fong_col_imp_name = cand
+                            break
+                    if fong_col_imp_name == "No° fongarium": # Still default, try fuzzy
+                         fong_col_imp_name = next((k for k,v in props_schema.items() if "fongarium" in k.lower() and v["type"] not in ["checkbox", "formula"]), "No° fongarium")
 
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -2163,9 +2186,9 @@ if st.session_state.search_results:
                     
                     # Logic: Prioritize Fongarium Code if present, else fallback to Tags if used as such
                     if fong_code:
-                         props["No° Fongarium"] = {"rich_text": [{"text": {"content": fong_code}}]}
+                         props[fong_col_imp_name] = {"rich_text": [{"text": {"content": fong_code}}]}
                     elif tag_string: 
-                         props["No° Fongarium"] = {"rich_text": [{"text": {"content": tag_string}}]}
+                         props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}]}
                     if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
                     if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
                     if lat: props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lat)}}]}
