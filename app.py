@@ -1876,6 +1876,19 @@ if st.session_state.search_results:
                                  num_len = 4
                                  current_prefix = prefix
 
+                             # 1. SYNCHRONIZE STATE from Widget
+                             # The data_editor doesn't update st.session_state.preview_df automatically in real-time for Python access unless 'num_rows' is dynamic or we parse the edits manually.
+                             # We must parse st.session_state["fongarium_preview_editor"]["edited_rows"]
+                             
+                             editor_state = st.session_state.get("fongarium_preview_editor", {})
+                             edited_rows = editor_state.get("edited_rows", {})
+                             
+                             # Apply edits to df_p before processing
+                             for idx, changes in edited_rows.items():
+                                 if "Collection" in changes:
+                                     df_p.at[idx, "Collection"] = changes["Collection"]
+                                     
+                             
                              processed_count = 0
                              for idx, row in df_p.iterrows():
                                  if row["Collection"]:
