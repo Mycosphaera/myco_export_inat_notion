@@ -10,3 +10,7 @@ __pycache__/
 .env
 venv/
 .venv/
+
+# Logs
+user_status_log.txt
+schema_debug.txt
