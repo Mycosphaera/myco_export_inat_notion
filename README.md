@@ -1,6 +1,6 @@
 # Portail Myco (iNat Sync & Fongarium)
 
-**Myco Export iNat Notion** est une application web Streamlit conçue pour les mycologues de MycoQuébec/Mycosphaera. Elle facilite la synchronisation des observations entre iNaturalist et Notion, la gestion des numéros de fongarium, et la génération d'étiquettes PDF pour les spécimens.
+**Myco Export iNat Notion** est une application web Streamlit conçue pour les mycologues de Mycosphaera. Elle facilite la synchronisation des observations entre iNaturalist et Notion, la gestion des numéros de fongarium, et la génération d'étiquettes PDF pour les spécimens.
 
 ## 🚀 Fonctionnalités
 
@@ -76,4 +76,4 @@ L'application sera accessible via votre navigateur (par défaut sur `http://loca
 Les contributions sont les bienvenues. Veuillez vous assurer de tester vos changements localement avant de soumettre une Pull Request.
 
 ---
-*Développé pour Mycosphaera / MycoQuébec.*
+*Développé pour Mycosphaera.*
