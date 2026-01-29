@@ -1930,9 +1930,12 @@ elif nav_mode == "📊 Tableau de Bord":
                 observed_on = obs.get('time_observed_at')
                 if not observed_on:
                     # Fallback to 'observed_on' (string YYYY-MM-DD or similar)
-                    obs_date_str = obs.get('observed_on')
-                    if obs_date_str:
-                        date_iso = obs_date_str # Usually already ISO or simple date
+                    obs_date_raw = obs.get('observed_on')
+                    if obs_date_raw:
+                        if hasattr(obs_date_raw, 'isoformat'):
+                            date_iso = obs_date_raw.isoformat()
+                        else:
+                            date_iso = str(obs_date_raw)
                     else:
                         date_iso = None
                 else:
