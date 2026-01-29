@@ -1938,19 +1938,19 @@ elif nav_mode == "📊 Tableau de Bord":
                 else:
                     date_iso = observed_on.isoformat()
                     
-                    obs_url = obs.get('uri')
-                    
-                    tags = obs.get('tags', []) 
-                    tag_string = ""
-                    if tags:
-                        extracted_tags = []
-                        for t in tags:
-                            if isinstance(t, dict): extracted_tags.append(t.get('tag', ''))
-                            elif isinstance(t, str): extracted_tags.append(t)
-                            else: extracted_tags.append(str(t))
-                        tag_string = ", ".join(filter(None, extracted_tags))
-    
-                    fong_code = row["No° Fongarium"]
+                obs_url = obs.get('uri')
+                
+                tags = obs.get('tags', []) 
+                tag_string = ""
+                if tags:
+                    extracted_tags = []
+                    for t in tags:
+                        if isinstance(t, dict): extracted_tags.append(t.get('tag', ''))
+                        elif isinstance(t, str): extracted_tags.append(t)
+                        else: extracted_tags.append(str(t))
+                    tag_string = ", ".join(filter(None, extracted_tags))
+
+                fong_code = row["No° Fongarium"]
                 
                 # PHOTOS LOGIC (Files & Media "Photo macro" + "Photo Inat" Legacy if needed)
                 photos = obs.get('photos', [])
