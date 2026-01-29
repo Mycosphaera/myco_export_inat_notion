@@ -1917,11 +1917,26 @@ elif nav_mode == "📊 Tableau de Bord":
                     status_text.text(f"Importation de {sci_name} ({i+1}/{total_imp})...")
                     
                     # --- DATA EXTRACTION & MAPPING ---
-                    user_name = obs.get('user', {}).get('login') or "Inconnu"
-                    # User Override from Row? (Mycologue column is disabled, so use source)
-                    
-                    observed_on = obs.get('time_observed_at')
-                    date_iso = observed_on.isoformat() if observed_on else None
+                inat_login = obs.get('user', {}).get('login') or "Inconnu"
+                
+                # USER LOGIC: If iNat login matches connected user, use Real Name (Notion Name)
+                # stored in st.session_state.username
+                user_name = inat_login
+                current_inat = st.session_state.get('inat_username', "")
+                if current_inat and inat_login.lower() == current_inat.lower():
+                     if st.session_state.username:
+                         user_name = st.session_state.username
+
+                observed_on = obs.get('time_observed_at')
+                if not observed_on:
+                    # Fallback to 'observed_on' (string YYYY-MM-DD or similar)
+                    obs_date_str = obs.get('observed_on')
+                    if obs_date_str:
+                        date_iso = obs_date_str # Usually already ISO or simple date
+                    else:
+                        date_iso = None
+                else:
+                    date_iso = observed_on.isoformat()
                     
                     obs_url = obs.get('uri')
                     
@@ -1936,29 +1951,51 @@ elif nav_mode == "📊 Tableau de Bord":
                         tag_string = ", ".join(filter(None, extracted_tags))
     
                     fong_code = row["No° Fongarium"]
-                    
-                    photos = obs.get('photos', [])
-                    cover_url = photos[0]['url'].replace("square", "medium") if photos else None
-                    first_photo_url = photos[0]['url'].replace("square", "original") if photos else None
-    
-                    # Children
-                    children = []
-                    if len(photos) > 1:
-                        children.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"text": {"content": "Galerie Photo"}}]}})
-                        for p in photos:
-                            children.append({
-                                "object": "block", 
-                                "type": "image", 
-                                "image": {"type": "external", "external": {"url": p['url'].replace("square", "large")}}
-                            })
-    
-                    # Props
-                    props = {}
-                    props["Titre"] = {"title": [{"text": {"content": sci_name}}]}
-                    if date_iso: props["Date"] = {"date": {"start": date_iso}}
-                    if user_name: props["Mycologue"] = {"select": {"name": user_name}}
-                    if obs_url: props["URL Inaturalist"] = {"url": obs_url}
-                    if first_photo_url: props["Photo Inat"] = {"url": first_photo_url}
+                
+                # PHOTOS LOGIC (Files & Media "Photo macro" + "Photo Inat" Legacy if needed)
+                photos = obs.get('photos', [])
+                
+                # Construct Files Payload for "Photo macro"
+                photo_files_payload = []
+                for p in photos:
+                    # iNat images: square, small, medium, large, original
+                    # Use original or large for high quality
+                    p_url = p['url'].replace("square", "original")
+                    p_name = f"iNat {p['id']}"
+                    photo_files_payload.append({
+                        "name": p_name,
+                        "type": "external",
+                        "external": {"url": p_url}
+                    })
+
+                # Legacy: First photo URL purely for reference? (Maybe keep or discard, User asked for "Photo macro" column)
+                obs_url = obs.get('uri')
+
+                # Children (Gallery in Page Body - Optional but nice to keep)
+                children = []
+                if len(photos) > 0: # Add all photos to gallery, even if just 1
+                    children.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"text": {"content": "Galerie Photo"}}]}})
+                    for p in photos:
+                        children.append({
+                            "object": "block", 
+                            "type": "image", 
+                            "image": {"type": "external", "external": {"url": p['url'].replace("square", "large")}}
+                        })
+
+                # Props
+                props = {}
+                props["Titre"] = {"title": [{"text": {"content": sci_name}}]}
+                if date_iso: props["Date"] = {"date": {"start": date_iso}}
+                
+                # Mycologue
+                if user_name: props["Mycologue"] = {"select": {"name": user_name}}
+                
+                if obs_url: props["URL Inaturalist"] = {"url": obs_url}
+                
+                # PHOTO MACRO (Files & Media)
+                # PHOTO MACRO (Files & Media)
+                if photo_files_payload:
+                    props["Photo macro"] = {"files": photo_files_payload}
                     
                     if fong_code:
                          props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
@@ -1993,8 +2030,7 @@ elif nav_mode == "📊 Tableau de Bord":
                         new_page = notion.pages.create(
                             parent={"database_id": fmt_db_id, "type": "database_id"},
                             properties=props,
-                            children=children,
-                            cover={"external": {"url": cover_url}} if cover_url else None
+                            children=children
                         )
                         
                         # QR Code Logic
