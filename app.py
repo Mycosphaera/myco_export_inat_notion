@@ -106,34 +106,24 @@ def login_page():
                 st.session_state.reg_email = ""
 
             if st.session_state.reg_step == 1:
-                st.write("#### Étape 1 : Vérification")
-                st.info("L'accès est restreint aux membres autorisés.")
+                st.write("#### Étape 1 : Email")
+                st.info("Entrez votre email pour commencer.")
                 
                 email_check = st.text_input("Votre Email", key="reg_email_input").lower().strip()
                 
-                if st.button("Vérifier mon éligibilité"):
+                if st.button("Continuer"):
                     if not email_check:
                         st.warning("Entrez un email.")
                     else:
-                        # RÈGLE : Liste expresse OU domaine @mycosphaera.com
-                        is_authorized = False
-                        if email_check.endswith("@mycosphaera.com"):
-                           is_authorized = True
-                        elif email_check in [u.lower() for u in AUTHORIZED_USERS]:
-                           is_authorized = True
-                           
-                        if is_authorized:
-                            st.session_state.reg_email = email_check
-                            st.session_state.reg_step = 2
-                            st.rerun()
-                        else:
-                            st.error("⛔ Désolé, cet email n'est pas autorisé.")
+                        st.session_state.reg_email = email_check
+                        st.session_state.reg_step = 2
+                        st.rerun()
 
             
             # Étape 2 : Création Profil
             elif st.session_state.reg_step == 2:
                 st.write("#### Étape 2 : Création du Profil")
-                st.success(f"✅ Email autorisé : {st.session_state.reg_email}")
+                st.success(f"✅ Email : {st.session_state.reg_email}")
                 
                 # Fetch Notion Mycologists List (Try, default to empty)
                 myco_options = get_notion_mycologists()
@@ -331,7 +321,7 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
 
     # Regex strict : Prefix + Digits only (e.g. MRD0015)
     # Case insensitive match for prefix, but digits at end
-    regex_pattern = re.compile(f"^{re.escape(prefix)}\d+$", re.IGNORECASE)
+    regex_pattern = re.compile(f"^{re.escape(prefix)}\\d+$", re.IGNORECASE)
 
     try:
         resp = requests.post(url, headers=headers, json=payload)
