@@ -41,6 +41,41 @@ if 'username' not in st.session_state:
     st.session_state.username = ""
 if 'user_info' not in st.session_state:
     st.session_state.user_info = {} # To store full profile
+if 'props_schema' not in st.session_state:
+    st.session_state.props_schema = {}
+
+@st.cache_data(ttl=600, show_spinner="Chargement du schéma Notion...")
+def fetch_notion_schema(token, db_id):
+    """
+    Récupère le schéma (propriétés) de la base de données Notion.
+    
+    Args:
+        token (str): Token Notion.
+        db_id (str): ID de la base.
+        
+    Returns:
+        dict: Dictionnaire des propriétés de la base.
+    """
+    if not token or not db_id:
+        return {}
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    
+    api_url_db = f"https://api.notion.com/v1/databases/{db_id}"
+    try:
+        resp = requests.get(api_url_db, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            return resp.json().get("properties", {})
+        else:
+            print(f"Notion Schema Error {resp.status_code}: {resp.text}")
+            return {}
+    except Exception as e:
+        print(f"Notion Schema Exception: {e}")
+        return {}
 
 def get_notion_mycologists():
     """
@@ -51,15 +86,12 @@ def get_notion_mycologists():
     """
     try:
         if not has_secrets: return []
-        # On utilise le client global 'notion' initialisé plus bas, ou on le recrée localement
-        # Pour être sûr, on le recrée ici car 'notion' est init plus bas dans le script
-        local_notion = Client(auth=NOTION_TOKEN, notion_version="2022-06-28") 
-        
-        db = local_notion.databases.retrieve(DATABASE_ID)
-        props = db.get("properties", {})
+        props = fetch_notion_schema(NOTION_TOKEN, DATABASE_ID)
         
         # On cherche la colonne "Mycologue" (Select ou Multi-select)
-        myco_prop = props.get("Mycologue", {})
+        # On utilise une recherche insensible à la casse pour plus de robustesse
+        myco_key = next((k for k in props if "mycologue" in k.lower()), "Mycologue")
+        myco_prop = props.get(myco_key, {})
         options = []
         
         if myco_prop.get("type") == "select":
@@ -461,6 +493,7 @@ def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
                 break
                 
     return all_results[:max_fetch]
+
 def constants_extract_text(prop_obj):
     """
     Extrait le texte brut d'une propriété Notion (Rich Text ou Titre).
@@ -605,6 +638,10 @@ elif nav_mode == "📊 Tableau de Bord":
 
     # --- DASHBOARD STATS ---
     if st.session_state.authenticated:
+        # Pre-fetch Notion schema for dynamic key detection if not already present
+        if not st.session_state.get('props_schema') and has_secrets:
+            st.session_state['props_schema'] = fetch_notion_schema(NOTION_TOKEN, DATABASE_ID)
+            
         st_col1, st_col2, st_col3 = st.columns(3)
         
         # Stat 1: iNat Total
@@ -740,17 +777,12 @@ elif nav_mode == "📊 Tableau de Bord":
                 }
                 
                 try:
-                    # 1. Fetch Schema (GET /v1/databases/{id})
-                    api_url_db = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
-                    resp_schema = requests.get(api_url_db, headers=headers)
+                    # 1. Fetch Schema (Cached)
+                    props_schema = fetch_notion_schema(NOTION_TOKEN, DATABASE_ID)
+                    st.session_state['props_schema'] = props_schema
                     
-                    if resp_schema.status_code != 200:
-                        st.error(f"Notion Error {resp_schema.status_code}: {resp_schema.text}")
-                        props_schema = {}
-                    else:
-                        db_info = resp_schema.json()
-                        props_schema = db_info.get("properties", {})
-                        st.session_state['props_schema'] = props_schema
+                    if not props_schema:
+                        st.error("Impossible de récupérer le schéma de la base de données Notion.")
     
                     # Extract Select Options
                     myco_options = []
