@@ -40,7 +40,12 @@ if 'user_info' not in st.session_state:
     st.session_state.user_info = {} # To store full profile
 
 def get_notion_mycologists():
-    """Récupère la liste des options de la propriété 'Mycologue' dans Notion"""
+    """
+    Récupère la liste des options de la propriété 'Mycologue' dans la base Notion.
+    
+    Returns:
+        list: Une liste triée des noms de mycologues disponibles.
+    """
     try:
         if not has_secrets: return []
         # On utilise le client global 'notion' initialisé plus bas, ou on le recrée localement
@@ -66,6 +71,10 @@ def get_notion_mycologists():
 
 # --- 3. FONCTION DE LOGIN / PORTAIL ---
 def login_page():
+    """
+    Affiche la page de connexion et de création de portail utilisateur.
+    Gère l'authentification et l'initialisation de la session.
+    """
     st.markdown("""
     <h1 style='text-align: center; color: #2E8B57;'>🍄 Portail Myco</h1>
     <p style='text-align: center;'>Identifiez-vous pour accéder à vos outils.</p>
@@ -173,8 +182,8 @@ if not st.session_state.authenticated:
 # --- CALLBACKS ---
 def sync_editor_changes():
     """
-    Callback to sync changes from data_editor back to main_import_df immediately.
-    Handles filtered views by using stored indices.
+    Synchronise les modifications du data_editor vers le DataFrame principal.
+    Gère la correspondance des indices dans les vues filtrées.
     """
     try:
         current_key = f"main_editor_{st.session_state.get('editor_key_version', 0)}"
@@ -204,6 +213,12 @@ def sync_editor_changes():
 # --- HELPER FUNCTIONS ---
 @st.dialog("🍄 Détails de l'observation")
 def show_details(obs_data):
+    """
+    Affiche une fenêtre modale avec les détails complets d'une observation.
+    
+    Args:
+        obs_data (dict): Les données de l'observation à afficher.
+    """
     # Large Image
     if obs_data.get('Image'):
         st.image(obs_data['Image'].replace("small", "large"), use_container_width=True)
@@ -226,8 +241,15 @@ def show_details(obs_data):
 @st.cache_data(ttl=300, show_spinner=False)
 def count_user_notion_obs(token, db_id, target_user):
     """
-    Compte précis des observations Notion filtrées par utilisateur.
-    Met en cache le résultat pour 5 minutes.
+    Compte les observations Notion filtrées par utilisateur.
+    
+    Args:
+        token (str): Token d'intégration Notion.
+        db_id (str): ID de la base de données.
+        target_user (str): Nom du mycologue cible.
+        
+    Returns:
+        int: Nombre total d'observations trouvées.
     """
     if not token or not db_id or not target_user: return 0
     
@@ -281,9 +303,16 @@ def count_user_notion_obs(token, db_id, target_user):
 @st.cache_data(ttl=600, show_spinner=False)
 def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
     """
-    Récupère le dernier numéro de fongarium attribué pour un utilisateur donné.
-    Ignore les codes temporaires (XXXX).
-    Retourne (dernier_code, code_suivant_suggéré).
+    Récupère le dernier numéro de fongarium attribué pour un utilisateur.
+    
+    Args:
+        token (str): Token d'intégration Notion.
+        db_id (str): ID de la base de données.
+        target_user (str): Nom du mycologue.
+        prefix (str): Préfixe du code fongarium (ex: 'MRD').
+        
+    Returns:
+        tuple: (dernier_code_trouvé, code_suivant_suggéré)
     """
     if not token or not db_id or not target_user or not prefix: return None, None
 
@@ -367,9 +396,16 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
 @st.cache_data(ttl=300, show_spinner="Chargement Notion...")
 def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
     """
-    Cached function to fetch Notion data.
-    notion_filter_and: The list of AND clauses for the filter.
-    Returns: list of results
+    Récupère les données de la base Notion avec filtres et limite.
+    
+    Args:
+        token (str): Token Notion.
+        db_id (str): ID de la base.
+        notion_filter_and (list): Clauses de filtrage Notion.
+        max_fetch (int): Limite maximale de résultats.
+        
+    Returns:
+        list: Liste des résultats de la requête Notion.
     """
     if not token or not db_id: return []
     
@@ -423,6 +459,15 @@ def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
                 
     return all_results[:max_fetch]
 def constants_extract_text(prop_obj):
+    """
+    Extrait le texte brut d'une propriété Notion (Rich Text ou Titre).
+    
+    Args:
+        prop_obj (dict): Objet propriété provenant de l'API Notion.
+        
+    Returns:
+        str: Texte extrait ou chaîne vide.
+    """
     # Helper to extract text from Rich Text property safely
     if not prop_obj: return ""
     rtype = prop_obj.get("type")
@@ -966,6 +1011,15 @@ elif nav_mode == "📊 Tableau de Bord":
                         
                         # Helpers to extract text safely
                         def get_prop_text(p_dict):
+                            """
+                            Extrait le texte d'un dictionnaire de propriété Notion selon son type.
+                            
+                            Args:
+                                p_dict (dict): Dictionnaire de la propriété.
+                                
+                            Returns:
+                                str: Contenu textuel de la propriété.
+                            """
                             if not p_dict: return ""
                             ptype = p_dict["type"]
                             if ptype == "title" and p_dict["title"]:
@@ -1112,6 +1166,16 @@ elif nav_mode == "📊 Tableau de Bord":
                             relation_cache = {}
                             
                             def get_relation_name(page_id):
+                                """
+                                Récupère le nom (titre) d'une page liée par relation.
+                                Utilise un cache local pour éviter les appels API redondants.
+                                
+                                Args:
+                                    page_id (str): ID de la page Notion cible.
+                                    
+                                Returns:
+                                    str: Titre de la page ou 'Inconnu'/'Erreur'.
+                                """
                                 if not page_id: return ""
                                 if page_id in relation_cache: return relation_cache[page_id]
                                 
@@ -1925,6 +1989,19 @@ elif nav_mode == "📊 Tableau de Bord":
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
                 def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id):
+                    """
+                    Fonction de travail pour l'importation multi-threadée d'une observation.
+                    
+                    Args:
+                        row (pd.Series): Ligne du DataFrame à importer.
+                        obs_obj (dict): Données brutes iNaturalist.
+                        current_inat (str): Nom d'utilisateur iNat actuel.
+                        real_name_notion (str): Nom d'affichage Notion.
+                        fmt_db_id (str): ID formaté de la base de données.
+                        
+                    Returns:
+                        tuple: (success_item, error_msg)
+                    """
                     sci_name = row["Taxon"]
                     obs_id = str(row["ID"])
                     
