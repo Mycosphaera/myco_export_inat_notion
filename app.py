@@ -6,8 +6,10 @@ from notion_client import Client
 from datetime import date, timedelta
 from labels import generate_label_pdf
 from database import get_user_by_email, create_user_profile, log_action, update_user_profile
-from whitelist import AUTHORIZED_USERS
+
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 
 # --- SECRETS MANAGEMENT ---
@@ -379,45 +381,47 @@ def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
     
     api_url_query = f"https://api.notion.com/v1/databases/{db_id}/query"
     
-    all_results = []
-    has_more = True
-    next_cursor = None
-    
-    # Safety Cap for recursion to avoid timeouts in cache
-    # But max_fetch controls this.
-    
-    while has_more and len(all_results) < max_fetch:
-        # Payload
-        query_payload = {
-            "page_size": min(100, max_fetch - len(all_results)), # Max 100 per API call
-            "sorts": [{"timestamp": "created_time", "direction": "descending"}]
-        }
+    # Use a session for connection pooling
+    with requests.Session() as session:
+        session.headers.update(headers)
         
-        if notion_filter_and:
-             query_payload["filter"] = {"and": notion_filter_and}
-             
-        if next_cursor:
-            query_payload["start_cursor"] = next_cursor
-        
-        resp_query = requests.post(api_url_query, headers=headers, json=query_payload)
-        
-        if resp_query.status_code != 200:
-             # st.error? We are in a cached function. Returning error might be bad.
-             # Return what we have.
-             print(f"Fetch Error: {resp_query.text}")
-             break
-        else:
-            data = resp_query.json()
-            batch = data.get("results", [])
-            all_results.extend(batch)
-            
-            has_more = data.get("has_more", False)
-            next_cursor = data.get("next_cursor")
-            
-            if max_fetch <= 100 and len(all_results) >= max_fetch: break
-            
-    return all_results
+        all_results = []
+        has_more = True
+        next_cursor = None
 
+        # NOTE: Notion pagination is sequential (cursor-based).
+        # We fetch pages one by one to respect the API design.
+        while has_more and len(all_results) < max_fetch:
+            page_size = min(100, max_fetch - len(all_results))
+            query_payload = {
+                "page_size": page_size,
+                "sorts": [{"timestamp": "created_time", "direction": "descending"}]
+            }
+            
+            if notion_filter_and:
+                query_payload["filter"] = {"and": notion_filter_and}
+                
+            if next_cursor:
+                query_payload["start_cursor"] = next_cursor
+            
+            try:
+                resp_query = session.post(api_url_query, json=query_payload, timeout=15)
+                resp_query.raise_for_status()
+                
+                data = resp_query.json()
+                batch = data.get("results", [])
+                all_results.extend(batch)
+                
+                has_more = data.get("has_more", False)
+                next_cursor = data.get("next_cursor")
+                
+                if len(all_results) >= max_fetch:
+                    break
+            except Exception as e:
+                print(f"Fetch Error: {e}")
+                break
+                
+    return all_results[:max_fetch]
 def constants_extract_text(prop_obj):
     # Helper to extract text from Rich Text property safely
     if not prop_obj: return ""
@@ -1136,22 +1140,42 @@ elif nav_mode == "📊 Tableau de Bord":
                             if st.button(f"Générer PDF ({len(selected_rows)})", type="primary", key="btn_notion_pdf_req"):
                                 try:
                                     with st.spinner("Préparation des données (Résolution des relations Notion)..."):
+                                        # 1. Collect all unique relation IDs to resolve
+                                        ids_to_resolve = set()
+                                        for _, row in selected_rows.iterrows():
+                                            for col in ["raw_habitat", "raw_substrate"]:
+                                                val = row.get(col)
+                                                if isinstance(val, list):
+                                                    ids_to_resolve.update(val)
+                                        
+                                        # 2. Pre-fetch them in parallel (skipping those already in cache)
+                                        to_fetch = [uid for uid in ids_to_resolve if uid not in relation_cache]
+                                        if to_fetch:
+                                            with ThreadPoolExecutor(max_workers=5) as executor:
+                                                futs = {executor.submit(get_relation_name, uid): uid for uid in to_fetch}
+                                                for fut in as_completed(futs):
+                                                    try:
+                                                        fut.result()
+                                                    except Exception:
+                                                        pass  # Error handling already done inside get_relation_name
+
+                                        # 3. Main processing loop (now extremely fast as it hits the cache)
                                         for idx, row in selected_rows.iterrows():
                                              # Resolve Relations here
                                              hab_name = ""
                                              if row.get("raw_habitat"):
-                                                 # Handle single or multiple? Take first.
-                                                 # row["raw_habitat"] should be list of IDs
                                                  ids = row["raw_habitat"]
                                                  if isinstance(ids, list) and ids:
-                                                     hab_name = get_relation_name(ids[0])
+                                                     names = [relation_cache.get(uid, "Inconnu") for uid in ids]
+                                                     hab_name = ", ".join(filter(None, names))
                                              
                                              sub_name = ""
                                              if row.get("raw_substrate"):
                                                  ids = row["raw_substrate"]
                                                  if isinstance(ids, list) and ids:
-                                                     sub_name = get_relation_name(ids[0])
-    
+                                                     names = [relation_cache.get(uid, "Inconnu") for uid in ids]
+                                                     sub_name = ", ".join(filter(None, names))
+     
                                              obs = {
                                                  "id": row["id"],
                                                  "taxon": {"name": row["Taxon"]},
@@ -1181,11 +1205,6 @@ elif nav_mode == "📊 Tableau de Bord":
                     else:
                         if resp_query.status_code == 200:
                             st.info("Aucun résultat pour cette recherche.")
-                        
-                except Exception as e:
-                     st.error(f"Erreur Notion Load: {e}")
-    
-                        
                 except Exception as e:
                      st.error(f"Erreur Notion Load: {e}")
             else:
@@ -1901,167 +1920,154 @@ elif nav_mode == "📊 Tableau de Bord":
                 success_log = []
                 error_log = []
                 
-                total_imp = len(to_import_df)
-                for i, (idx, row) in enumerate(to_import_df.iterrows()):
-                    obs_id = str(row["ID"])
-                    obs = obs_map.get(obs_id)
-                    if not obs:
-                        error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
-                        continue 
-                    
+                # --- WORKER FUNCTION FOR MULTI-THREADING ---
+                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id):
                     sci_name = row["Taxon"]
-                    status_text.text(f"Importation de {sci_name} ({i+1}/{total_imp})...")
+                    obs_id = str(row["ID"])
                     
-                    # --- DATA EXTRACTION & MAPPING ---
-                    inat_login = obs.get('user', {}).get('login') or "Inconnu"
-                
-                    # USER LOGIC: If iNat login matches connected user, use Real Name (Notion Name)
-                    # stored in st.session_state.username
-                    user_name = inat_login
-                    current_inat = st.session_state.get('inat_username', "")
-                    if current_inat and inat_login.lower() == current_inat.lower():
-                         if st.session_state.username:
-                             user_name = st.session_state.username
+                    try:
+                        # --- DATA EXTRACTION & MAPPING ---
+                        inat_login = obs_obj.get('user', {}).get('login') or "Inconnu"
+                        user_name = inat_login
+                        if current_inat and inat_login.lower() == current_inat.lower():
+                            if real_name_notion:
+                                user_name = real_name_notion
 
-                    observed_on = obs.get('time_observed_at')
-                    if not observed_on:
-                        # Fallback to 'observed_on' (string YYYY-MM-DD or similar)
-                        obs_date_raw = obs.get('observed_on')
-                        if obs_date_raw:
-                            if hasattr(obs_date_raw, 'isoformat'):
-                                date_iso = obs_date_raw.isoformat()
+                        observed_on = obs_obj.get('time_observed_at')
+                        if not observed_on:
+                            obs_date_raw = obs_obj.get('observed_on')
+                            if obs_date_raw:
+                                date_iso = obs_date_raw.isoformat() if hasattr(obs_date_raw, 'isoformat') else str(obs_date_raw)
                             else:
-                                date_iso = str(obs_date_raw)
+                                date_iso = None
                         else:
-                            date_iso = None
-                    else:
-                        date_iso = observed_on.isoformat()
-                    
-                    obs_url = obs.get('uri')
-                
-                    tags = obs.get('tags', []) 
-                    tag_string = ""
-                    if tags:
-                        extracted_tags = []
-                        for t in tags:
-                            if isinstance(t, dict): extracted_tags.append(t.get('tag', ''))
-                            elif isinstance(t, str): extracted_tags.append(t)
-                            else: extracted_tags.append(str(t))
-                        tag_string = ", ".join(filter(None, extracted_tags))
+                            date_iso = observed_on.isoformat()
+                        
+                        obs_url = obs_obj.get('uri')
+                        tags = obs_obj.get('tags', []) 
+                        tag_string = ""
+                        if tags:
+                            extracted_tags = []
+                            for t in tags:
+                                if isinstance(t, dict): extracted_tags.append(t.get('tag', ''))
+                                elif isinstance(t, str): extracted_tags.append(t)
+                                else: extracted_tags.append(str(t))
+                            tag_string = ", ".join(filter(None, extracted_tags))
 
-                    fong_code = row["No° Fongarium"]
-                
-                    # PHOTOS LOGIC (Files & Media "Photo macro" + "Photo Inat" Legacy if needed)
-                    photos = obs.get('photos', [])
-                
-                    # Construct Files Payload for "Photo macro"
-                    photo_files_payload = []
-                    for p in photos:
-                        # iNat images: square, small, medium, large, original
-                        # Use original or large for high quality
-                        p_url = p['url'].replace("square", "original")
-                        p_name = f"iNat {p['id']}"
-                        photo_files_payload.append({
-                            "name": p_name,
-                            "type": "external",
-                            "external": {"url": p_url}
-                        })
-
-                    # Legacy: First photo URL purely for reference? (Maybe keep or discard, User asked for "Photo macro" column)
-                    obs_url = obs.get('uri')
-
-                    # Children (Gallery in Page Body - Optional but nice to keep)
-                    children = []
-                    if len(photos) > 0: # Add all photos to gallery, even if just 1
-                        children.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"text": {"content": "Galerie Photo"}}]}})
+                        fong_code = row["No° Fongarium"]
+                        photos = obs_obj.get('photos', [])
+                        photo_files_payload = []
                         for p in photos:
-                            children.append({
-                                "object": "block", 
-                                "type": "image", 
-                                "image": {"type": "external", "external": {"url": p['url'].replace("square", "large")}}
+                            photo_files_payload.append({
+                                "name": f"iNat {p['id']}",
+                                "type": "external",
+                                "external": {"url": p['url'].replace("square", "original")}
                             })
 
-                    # Props
-                    props = {}
-                    props["Titre"] = {"title": [{"text": {"content": sci_name}}]}
-                    if date_iso: props["Date"] = {"date": {"start": date_iso}}
-                    
-                    # Mycologue
-                    if user_name: props["Mycologue"] = {"select": {"name": user_name}}
-                    
-                    if obs_url: props["URL Inaturalist"] = {"url": obs_url}
-                    
-                    # PHOTO MACRO (Files & Media)
-                    if photo_files_payload:
-                        props["Photo macro"] = {"files": photo_files_payload}
-                    
-                    # OTHER PROPS (Moved OUTSIDE the photo check to ensure they populate essentially)
-                    if fong_code:
-                        props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}] }
-                    # NOTE: Si les tags ne doivent PAS alimenter le champ fongarium, supprimer ce elif
-                    elif tag_string:
-                        props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}] }
-                    
-                    description = obs.get('description', '')
-                    if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
-                    
-                    place_guess = obs.get('place_guess', '')
-                    if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
-                    
-                    # Coords
-                    lat = None
-                    lon = None
-                    coords = obs.get('location')
-                    if coords:
-                        try:
-                            if isinstance(coords, str):
-                                parts = coords.split(',')
-                                if len(parts) >= 2:
-                                    lat = float(parts[0])
-                                    lon = float(parts[1])
-                                else:
-                                    raise ValueError("Format de chaîne 'lat,lon' attendu")
-                            elif isinstance(coords, list) and len(coords) >= 2:
-                                lat = float(coords[0])
-                                lon = float(coords[1])
-                        except (ValueError, TypeError, IndexError) as e:
-                            st.error(f"Erreur parsing coordonnées pour {sci_name}: {e!s}")
+                        children = []
+                        if photos:
+                            children.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"text": {"content": "Galerie Photo"}}]}})
+                            for p in photos:
+                                children.append({
+                                    "object": "block", 
+                                    "type": "image", 
+                                    "image": {"type": "external", "external": {"url": p['url'].replace("square", "large")}}
+                                })
 
-                    if lat is not None: props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lat)}}]}
-                    if lon is not None: props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lon)}}]}
-    
-                    # SEND
-                    try:
-                        import re
-                        clean_id_imp = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
-                        if len(clean_id_imp) == 32:
-                            fmt_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}"
-                        else: fmt_db_id = clean_id_imp
+                        # Construct Props
+                        props = {
+                            "Titre": {"title": [{"text": {"content": sci_name}}]}
+                        }
+                        if date_iso: props["Date"] = {"date": {"start": date_iso}}
+                        if user_name: props["Mycologue"] = {"select": {"name": user_name}}
+                        if obs_url: props["URL Inaturalist"] = {"url": obs_url}
+                        if photo_files_payload: props["Photo macro"] = {"files": photo_files_payload}
                         
+                        if fong_code:
+                            props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
+                        elif tag_string:
+                            props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}]}
+                        
+                        description = obs_obj.get('description', '')
+                        if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
+                        
+                        place_guess = obs_obj.get('place_guess', '')
+                        if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
+                        
+                        coords = obs_obj.get('location')
+                        if coords:
+                            try:
+                                if isinstance(coords, str):
+                                    parts = coords.split(',')
+                                    if len(parts) >= 2:
+                                        props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": parts[0].strip()}}]}
+                                        props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": parts[1].strip()}}]}
+                                elif isinstance(coords, list) and len(coords) >= 2:
+                                    props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(coords[0])}}]}
+                                    props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(coords[1])}}]}
+                            except Exception as coord_err:
+                                print(f"Coord parse warning for {obs_id}: {coord_err}")
+
                         new_page = notion.pages.create(
                             parent={"database_id": fmt_db_id, "type": "database_id"},
                             properties=props,
                             children=children
                         )
                         
-                        # Logging Success
                         p_url = new_page.get('url')
-                        success_log.append({"name": sci_name, "id": obs_id, "url": p_url})
-                        
-                        # QR Code Logic
                         page_id = new_page.get('id')
+                        
+                        # QR Code
                         if p_url and page_id:
                             qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={p_url}"
                             try:
                                 notion.pages.update(page_id=page_id, properties={"Code QR": {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}})
                             except Exception as qr_err:
-                                error_log.append(f"QR Code pour {sci_name} (ID: {obs_id}) : {qr_err!s}")
+                                return (None, f"⚠️ Importation réussie mais échec du QR Code pour {sci_name} (ID: {obs_id}). Page créée : {p_url}. Erreur : {qr_err!s}")
+
+                        return ({"name": sci_name, "id": obs_id, "url": p_url}, None)
 
                     except Exception as e:
-                        error_log.append(f"{sci_name} (ID: {obs_id}) : {e!s}")
-                        st.warning(f"Erreur Notion sur {sci_name}: {e}")
+                        return (None, f"{sci_name} (ID: {obs_id}) : {e!s}")
+
+                # --- EXECUTION WITH THREADPOOL ---
+                futures = []
                 
-                    progress_bar.progress((i + 1) / total_imp)
+                current_inat_val = st.session_state.get('inat_username', "")
+                real_name_val = st.session_state.get('username', "")
+                
+                # Pre-calculate formatted Database ID once
+                clean_id_imp = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
+                formatted_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}" if len(clean_id_imp) == 32 else clean_id_imp
+
+                with ThreadPoolExecutor(max_workers=3) as executor:
+                    for _, row in to_import_df.iterrows():
+                        obs_id = str(row["ID"])
+                        obs = obs_map.get(obs_id)
+                        if not obs:
+                            error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
+                            continue
+                        
+                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id))
+
+                    total_tasks = len(futures)
+                    if total_tasks > 0:
+                        for i, future in enumerate(as_completed(futures)):
+                            try:
+                                success_item, error_msg = future.result()
+                                if success_item:
+                                    success_log.append(success_item)
+                                if error_msg:
+                                    error_log.append(error_msg)
+                            except Exception as fut_err:
+                                error_log.append(f"Erreur système durant l'import : {fut_err!s}")
+                            
+                            # Update progress in main thread even if a task failed
+                            progress_bar.progress((i + 1) / total_tasks)
+                            status_text.text(f"Traitement en cours... ({i+1}/{total_tasks})")
+                    else:
+                        progress_bar.progress(1.0)
+                        status_text.text("Aucune observation valide à importer.")
                 
                 status_text.empty()
                 
