@@ -1140,21 +1140,21 @@ elif nav_mode == "📊 Tableau de Bord":
                             if st.button(f"Générer PDF ({len(selected_rows)})", type="primary", key="btn_notion_pdf_req"):
                                 try:
                                     with st.spinner("Préparation des données (Résolution des relations Notion)..."):
-                                        # --- OPTIMIZATION: Fix N+1 Query ---
                                         # 1. Collect all unique relation IDs to resolve
                                         ids_to_resolve = set()
                                         for _, row in selected_rows.iterrows():
                                             for col in ["raw_habitat", "raw_substrate"]:
                                                 val = row.get(col)
-                                                if isinstance(val, list) and val:
-                                                    ids_to_resolve.add(val[0])
+                                                if isinstance(val, list):
+                                                    ids_to_resolve.update(val)
                                         
                                         # 2. Pre-fetch them in parallel (skipping those already in cache)
                                         to_fetch = [uid for uid in ids_to_resolve if uid not in relation_cache]
                                         if to_fetch:
                                             # Using the existing ThreadPoolExecutor workers limit
                                             with ThreadPoolExecutor(max_workers=5) as executor:
-                                                executor.map(get_relation_name, to_fetch)
+                                                # Consuming the iterator to ensure completion and error propagation
+                                                list(executor.map(get_relation_name, to_fetch))
 
                                         # 3. Main processing loop (now extremely fast as it hits the cache)
                                         for idx, row in selected_rows.iterrows():
@@ -1163,13 +1163,15 @@ elif nav_mode == "📊 Tableau de Bord":
                                              if row.get("raw_habitat"):
                                                  ids = row["raw_habitat"]
                                                  if isinstance(ids, list) and ids:
-                                                     hab_name = relation_cache.get(ids[0], "Inconnu")
+                                                     names = [relation_cache.get(uid, "Inconnu") for uid in ids]
+                                                     hab_name = ", ".join(filter(None, names))
                                              
                                              sub_name = ""
                                              if row.get("raw_substrate"):
                                                  ids = row["raw_substrate"]
                                                  if isinstance(ids, list) and ids:
-                                                     sub_name = relation_cache.get(ids[0], "Inconnu")
+                                                     names = [relation_cache.get(uid, "Inconnu") for uid in ids]
+                                                     sub_name = ", ".join(filter(None, names))
      
                                              obs = {
                                                  "id": row["id"],
