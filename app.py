@@ -1988,7 +1988,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 error_log = []
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
-                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id):
+                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, props_schema):
                     """
                     Fonction de travail pour l'importation multi-threadée d'une observation.
                     
@@ -1998,6 +1998,7 @@ elif nav_mode == "📊 Tableau de Bord":
                         current_inat (str): Nom d'utilisateur iNat actuel.
                         real_name_notion (str): Nom d'affichage Notion.
                         fmt_db_id (str): ID formaté de la base de données.
+                        props_schema (dict): Schéma des propriétés Notion.
                         
                     Returns:
                         tuple: (success_item, error_msg)
@@ -2100,13 +2101,17 @@ elif nav_mode == "📊 Tableau de Bord":
                         # QR Codes
                         if page_id:
                             qr_props = {}
+                            # Detect keys dynamically
+                            qr_notion_key = next((k for k in props_schema if "qr" in k.lower() and "notion" in k.lower()), "Code QR (Notion)")
+                            qr_inat_key = next((k for k in props_schema if "qr" in k.lower() and "inat" in k.lower()), "Code QR (Inat)")
+
                             if p_url:
                                 qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={p_url}"
-                                qr_props["Code QR (Notion)"] = {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}
+                                qr_props[qr_notion_key] = {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}
                             
                             if obs_url:
                                 inat_qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={obs_url}"
-                                qr_props["Code QR (Inat)"] = {"files": [{"name": "inat_qr.png", "type": "external", "external": {"url": inat_qr_url}}]}
+                                qr_props[qr_inat_key] = {"files": [{"name": "inat_qr.png", "type": "external", "external": {"url": inat_qr_url}}]}
 
                             if qr_props:
                                 try:
@@ -2138,7 +2143,7 @@ elif nav_mode == "📊 Tableau de Bord":
                             error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
                             continue
                         
-                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id))
+                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id, import_props_schema))
 
                     total_tasks = len(futures)
                     if total_tasks > 0:
