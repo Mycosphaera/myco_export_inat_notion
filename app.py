@@ -2000,12 +2000,15 @@ elif nav_mode == "📊 Tableau de Bord":
                 
                 if import_props_schema:
                     fong_candidates = ["No° fongarium", "No fongarium", "Numéro fongarium", "Code fongarium"]
+                    found = False
                     for cand in fong_candidates:
                         if cand in import_props_schema:
                             fong_col_imp_name = cand
+                            found = True
                             break
-                        if fong_col_imp_name == "No° fongarium":
-                             fong_col_imp_name = next((k for k,v in import_props_schema.items() if "fongarium" in k.lower() and v["type"] not in ["checkbox", "formula"]), "No° fongarium")
+                    
+                    if not found:
+                         fong_col_imp_name = next((k for k,v in import_props_schema.items() if "fongarium" in k.lower() and v["type"] not in ["checkbox", "formula"]), "No° fongarium")
                 
                 progress_bar = st.progress(0)
                 status_text = st.empty()
