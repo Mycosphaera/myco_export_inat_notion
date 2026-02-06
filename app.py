@@ -8,6 +8,8 @@ from labels import generate_label_pdf
 from database import get_user_by_email, create_user_profile, log_action, update_user_profile
 
 import re
+import time
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote
 
@@ -2090,7 +2092,25 @@ elif nav_mode == "📊 Tableau de Bord":
                             except Exception as coord_err:
                                 print(f"Coord parse warning for {obs_id}: {coord_err}")
 
-                        new_page = notion.pages.create(
+                        # --- SEND TO NOTION WITH RETRY ---
+                        def call_notion_with_retry(func, **kwargs):
+                            max_retries = 5
+                            for attempt in range(max_retries):
+                                try:
+                                    return func(**kwargs)
+                                except Exception as e:
+                                    # Status 429 is Rate Limit
+                                    if hasattr(e, "status") and e.status == 429:
+                                        if attempt == max_retries - 1:
+                                            raise e
+                                        # Exponential backoff with jitter
+                                        sleep_time = (2 ** attempt) + random.uniform(0, 1)
+                                        time.sleep(sleep_time)
+                                    else:
+                                        raise e
+
+                        new_page = call_notion_with_retry(
+                            notion.pages.create,
                             parent={"database_id": fmt_db_id, "type": "database_id"},
                             properties=props,
                             children=children
@@ -2118,7 +2138,7 @@ elif nav_mode == "📊 Tableau de Bord":
 
                             if qr_props:
                                 try:
-                                    notion.pages.update(page_id=page_id, properties=qr_props)
+                                    call_notion_with_retry(notion.pages.update, page_id=page_id, properties=qr_props)
                                 except Exception as qr_err:
                                     warning_msg = f"⚠️ Importation réussie mais échec de la mise à jour des QR Codes pour {sci_name} (ID: {obs_id}). Erreur : {qr_err!s}"
                                     return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
@@ -2138,7 +2158,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 clean_id_imp = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
                 formatted_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}" if len(clean_id_imp) == 32 else clean_id_imp
 
-                with ThreadPoolExecutor(max_workers=3) as executor:
+                with ThreadPoolExecutor(max_workers=2) as executor:
                     for _, row in to_import_df.iterrows():
                         obs_id = str(row["ID"])
                         obs = obs_map.get(obs_id)
