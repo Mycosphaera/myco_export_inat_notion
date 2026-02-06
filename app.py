@@ -2013,13 +2013,16 @@ elif nav_mode == "📊 Tableau de Bord":
                         try:
                             if isinstance(coords, str):
                                 parts = coords.split(',')
-                                lat = float(parts[0])
-                                lon = float(parts[1])
+                                if len(parts) >= 2:
+                                    lat = float(parts[0])
+                                    lon = float(parts[1])
+                                else:
+                                    raise ValueError("Format de chaîne 'lat,lon' attendu")
                             elif isinstance(coords, list) and len(coords) >= 2:
                                 lat = float(coords[0])
                                 lon = float(coords[1])
-                        except (ValueError, TypeError) as e:
-                            st.error(f"Erreur parsing coordonnées pour {sci_name}: {e}")
+                        except (ValueError, TypeError, IndexError) as e:
+                            st.error(f"Erreur parsing coordonnées pour {sci_name}: {e!s}")
 
                     if lat is not None: props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lat)}}]}
                     if lon is not None: props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lon)}}]}
