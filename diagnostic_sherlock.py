@@ -10,7 +10,7 @@ try:
     if "supabase" in st.secrets and "url" in st.secrets["supabase"]:
         url_secrete = st.secrets["supabase"]["url"]
         # J'ajoute des barres | autour pour voir s'il y a des espaces
-        st.code(f"|{url_secrete}|", language="text") 
+        # st.code(f"|{url_secrete}|", language="text") 
         
         if " " in url_secrete:
             st.error("🚨 ALERTE : Il y a un espace vide dans ton URL ! (Regarde bien entre les barres)")
