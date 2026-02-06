@@ -9,6 +9,7 @@ from database import get_user_by_email, create_user_profile, log_action, update_
 
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import quote
 
 
 
@@ -2106,11 +2107,13 @@ elif nav_mode == "📊 Tableau de Bord":
                             qr_inat_key = next((k for k in props_schema if "qr" in k.lower() and "inat" in k.lower()), "Code QR (Inat)")
 
                             if p_url:
-                                qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={p_url}"
+                                encoded_p_url = quote(p_url, safe='')
+                                qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={encoded_p_url}"
                                 qr_props[qr_notion_key] = {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}
                             
                             if obs_url:
-                                inat_qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={obs_url}"
+                                encoded_obs_url = quote(obs_url, safe='')
+                                inat_qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={encoded_obs_url}"
                                 qr_props[qr_inat_key] = {"files": [{"name": "inat_qr.png", "type": "external", "external": {"url": inat_qr_url}}]}
 
                             if qr_props:
