@@ -2006,15 +2006,23 @@ elif nav_mode == "📊 Tableau de Bord":
                     if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
                     
                     # Coords
-                    lat = None; lon = None
+                    lat = None
+                    lon = None
                     coords = obs.get('location')
                     if coords:
                         try:
-                            if isinstance(coords, str): parts = coords.split(','); lat = float(parts[0]); lon = float(parts[1])
-                            elif isinstance(coords, list) and len(coords) >= 2: lat = float(coords[0]); lon = float(coords[1])
-                        except: pass
-                    if lat: props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lat)}}]}
-                    if lon: props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lon)}}]}
+                            if isinstance(coords, str):
+                                parts = coords.split(',')
+                                lat = float(parts[0])
+                                lon = float(parts[1])
+                            elif isinstance(coords, list) and len(coords) >= 2:
+                                lat = float(coords[0])
+                                lon = float(coords[1])
+                        except (ValueError, TypeError) as e:
+                            st.error(f"Erreur parsing coordonnées pour {sci_name}: {e}")
+
+                    if lat is not None: props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lat)}}]}
+                    if lon is not None: props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lon)}}]}
     
                     # SEND
                     try:
@@ -2065,4 +2073,5 @@ elif nav_mode == "📊 Tableau de Bord":
                             url_md = f"[Ouvrir]({s['url']})" if s['url'] else "N/A"
                             st.markdown(f"- **{s['name']}** (ID: {s['id']}) — {url_md}")
                 
-                st.balloons()
+                if success_log and not error_log:
+                    st.balloons()
