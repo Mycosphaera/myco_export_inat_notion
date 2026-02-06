@@ -1897,11 +1897,17 @@ elif nav_mode == "📊 Tableau de Bord":
                 # So looking up by ID in search_results is safer.
                 obs_map = {str(obs['id']): obs for obs in st.session_state.search_results}
                 
+                # Containers for logs
+                success_log = []
+                error_log = []
+                
                 total_imp = len(to_import_df)
                 for i, (idx, row) in enumerate(to_import_df.iterrows()):
                     obs_id = str(row["ID"])
                     obs = obs_map.get(obs_id)
-                    if not obs: continue 
+                    if not obs:
+                        error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
+                        continue 
                     
                     sci_name = row["Taxon"]
                     status_text.text(f"Importation de {sci_name} ({i+1}/{total_imp})...")
@@ -1979,38 +1985,50 @@ elif nav_mode == "📊 Tableau de Bord":
                     props = {}
                     props["Titre"] = {"title": [{"text": {"content": sci_name}}]}
                     if date_iso: props["Date"] = {"date": {"start": date_iso}}
-                
+                    
                     # Mycologue
                     if user_name: props["Mycologue"] = {"select": {"name": user_name}}
-                
+                    
                     if obs_url: props["URL Inaturalist"] = {"url": obs_url}
-                
-                    # PHOTO MACRO (Files & Media)
+                    
                     # PHOTO MACRO (Files & Media)
                     if photo_files_payload:
                         props["Photo macro"] = {"files": photo_files_payload}
                     
-                        if fong_code:
-                             props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
-                        elif tag_string: 
-                             props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}]}
+                    # OTHER PROPS (Moved OUTSIDE the photo check to ensure they populate essentially)
+                    if fong_code:
+                        props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}] }
+                    # NOTE: Si les tags ne doivent PAS alimenter le champ fongarium, supprimer ce elif
+                    elif tag_string:
+                        props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}] }
                     
-                        description = obs.get('description', '')
-                        if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
+                    description = obs.get('description', '')
+                    if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
                     
-                        place_guess = obs.get('place_guess', '')
-                        if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
+                    place_guess = obs.get('place_guess', '')
+                    if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
                     
-                        # Coords
-                        lat = None; lon = None
-                        coords = obs.get('location')
-                        if coords:
-                            try:
-                                if isinstance(coords, str): parts = coords.split(','); lat = float(parts[0]); lon = float(parts[1])
-                                elif isinstance(coords, list) and len(coords) >= 2: lat = float(coords[0]); lon = float(coords[1])
-                            except: pass
-                        if lat: props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lat)}}]}
-                        if lon: props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lon)}}]}
+                    # Coords
+                    lat = None
+                    lon = None
+                    coords = obs.get('location')
+                    if coords:
+                        try:
+                            if isinstance(coords, str):
+                                parts = coords.split(',')
+                                if len(parts) >= 2:
+                                    lat = float(parts[0])
+                                    lon = float(parts[1])
+                                else:
+                                    raise ValueError("Format de chaîne 'lat,lon' attendu")
+                            elif isinstance(coords, list) and len(coords) >= 2:
+                                lat = float(coords[0])
+                                lon = float(coords[1])
+                        except (ValueError, TypeError, IndexError) as e:
+                            st.error(f"Erreur parsing coordonnées pour {sci_name}: {e!s}")
+
+                    if lat is not None: props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lat)}}]}
+                    if lon is not None: props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lon)}}]}
     
                     # SEND
                     try:
@@ -2025,20 +2043,42 @@ elif nav_mode == "📊 Tableau de Bord":
                             properties=props,
                             children=children
                         )
-                    
+                        
+                        # Logging Success
+                        p_url = new_page.get('url')
+                        success_log.append({"name": sci_name, "id": obs_id, "url": p_url})
+                        
                         # QR Code Logic
-                        page_url = new_page.get('url')
                         page_id = new_page.get('id')
-                        if page_url and page_id:
-                            qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={page_url}"
+                        if p_url and page_id:
+                            qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={p_url}"
                             try:
                                 notion.pages.update(page_id=page_id, properties={"Code QR": {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}})
-                            except: pass
+                            except Exception as qr_err:
+                                error_log.append(f"QR Code pour {sci_name} (ID: {obs_id}) : {qr_err!s}")
 
                     except Exception as e:
+                        error_log.append(f"{sci_name} (ID: {obs_id}) : {e!s}")
                         st.warning(f"Erreur Notion sur {sci_name}: {e}")
                 
                     progress_bar.progress((i + 1) / total_imp)
                 
-                status_text.text("✅ Importation terminée avec succès !")
-                st.success("Import terminé.")
+                status_text.empty()
+                
+                # --- FINAL REPORT ---
+                if error_log:
+                    st.error(f"⚠️ Terminé avec {len(error_log)} erreurs.")
+                    with st.expander("Voir les erreurs"):
+                        for err in error_log:
+                            st.write(f"- {err}")
+                
+                if success_log:
+                    st.success(f"✅ {len(success_log)} observations importées avec succès !")
+                    with st.expander("📋 Voir la liste des imports réussis", expanded=True):
+                        # Display as a clean Markdown list with links
+                        for s in success_log:
+                            url_md = f"[Ouvrir]({s['url']})" if s['url'] else "N/A"
+                            st.markdown(f"- **{s['name']}** (ID: {s['id']}) — {url_md}")
+                
+                if success_log and not error_log:
+                    st.balloons()
