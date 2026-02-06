@@ -2021,7 +2021,7 @@ elif nav_mode == "📊 Tableau de Bord":
                             try:
                                 notion.pages.update(page_id=page_id, properties={"Code QR": {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}})
                             except Exception as qr_err:
-                                return ({"name": sci_name, "id": obs_id, "url": p_url}, f"QR Code pour {sci_name} (ID: {obs_id}) : {qr_err!s}")
+                                return (None, f"⚠️ Importation réussie mais échec du QR Code pour {sci_name} (ID: {obs_id}). Page créée : {p_url}. Erreur : {qr_err!s}")
 
                         return ({"name": sci_name, "id": obs_id, "url": p_url}, None)
 
