@@ -1154,10 +1154,13 @@ elif nav_mode == "📊 Tableau de Bord":
                                             with ThreadPoolExecutor(max_workers=5) as executor:
                                                 futs = {executor.submit(get_relation_name, uid): uid for uid in to_fetch}
                                                 for fut in as_completed(futs):
+                                                    uid = futs[fut]
                                                     try:
                                                         fut.result()
-                                                    except Exception:
-                                                        pass  # Error handling already done inside get_relation_name
+                                                    except Exception as e:
+                                                        print(f"Error fetching relation name for {uid}: {e}")
+                                                        # Internal error handling in get_relation_name usually returns 'Erreur' 
+                                                        # but we log the unexpected exception here just in case.
 
                                         # 3. Main processing loop (now extremely fast as it hits the cache)
                                         for idx, row in selected_rows.iterrows():
