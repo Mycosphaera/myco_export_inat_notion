@@ -2017,14 +2017,23 @@ elif nav_mode == "📊 Tableau de Bord":
                         p_url = new_page.get('url')
                         page_id = new_page.get('id')
                         
-                        # QR Code
-                        if p_url and page_id:
-                            qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={p_url}"
-                            try:
-                                notion.pages.update(page_id=page_id, properties={"Code QR": {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}})
-                            except Exception as qr_err:
-                                warning_msg = f"⚠️ Importation réussie mais échec du QR Code pour {sci_name} (ID: {obs_id}). Erreur : {qr_err!s}"
-                                return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
+                        # QR Codes
+                        if page_id:
+                            qr_props = {}
+                            if p_url:
+                                qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={p_url}"
+                                qr_props["Code QR (Notion)"] = {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}
+                            
+                            if obs_url:
+                                inat_qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={obs_url}"
+                                qr_props["Code QR (Inat)"] = {"files": [{"name": "inat_qr.png", "type": "external", "external": {"url": inat_qr_url}}]}
+
+                            if qr_props:
+                                try:
+                                    notion.pages.update(page_id=page_id, properties=qr_props)
+                                except Exception as qr_err:
+                                    warning_msg = f"⚠️ Importation réussie mais échec de la mise à jour des QR Codes pour {sci_name} (ID: {obs_id}). Erreur : {qr_err!s}"
+                                    return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
 
                         return ({"name": sci_name, "id": obs_id, "url": p_url}, None)
 
