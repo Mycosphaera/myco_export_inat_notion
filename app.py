@@ -651,12 +651,12 @@ elif nav_mode == "📊 Tableau de Bord":
                 # Quick fetch single ID
                 # We prioritize logged in user
                 target_user = st.session_state.inat_username or "mycosphaera"
-                # API Call with per_page=0 just to get total_results
-                stat_api = get_observations(user_id=target_user, per_page=0)
+                # API Call with per_page=0 just to get total_results, filtering for Fungi and Protozoa
+                stat_api = get_observations(user_id=target_user, per_page=0, iconic_taxa=['Fungi', 'Protozoa'])
                 total_inat = stat_api.get("total_results", 0)
-                st.metric(label=f"Obs. iNaturalist ({target_user})", value=total_inat)
-            except:
-                st.metric(label="Obs. iNaturalist", value="--")
+                st.metric(label=f"Obs. Myco/Mixos ({target_user})", value=total_inat, help="Total cumulé des Fungi et Protozoaires (Myxomycètes) sur iNaturalist")
+            except Exception:
+                st.metric(label="Obs. Myco/Mixos", value="--")
 
         # Stat 2: Notion (Count)
         with st_col2:
