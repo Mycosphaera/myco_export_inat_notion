@@ -6,7 +6,7 @@ from notion_client import Client
 from datetime import date, timedelta
 from labels import generate_label_pdf
 from database import get_user_by_email, create_user_profile, log_action, update_user_profile
-from whitelist import AUTHORIZED_USERS
+
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
