@@ -655,7 +655,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 stat_api = get_observations(user_id=target_user, per_page=0, iconic_taxa=['Fungi', 'Protozoa'])
                 total_inat = stat_api.get("total_results", 0)
                 st.metric(label=f"Obs. Myco/Mixos ({target_user})", value=total_inat, help="Total cumulé des Fungi et Protozoaires (Myxomycètes) sur iNaturalist")
-            except:
+            except Exception:
                 st.metric(label="Obs. Myco/Mixos", value="--")
 
         # Stat 2: Notion (Count)
