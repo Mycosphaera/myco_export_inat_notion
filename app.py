@@ -2038,7 +2038,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 formatted_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}" if len(clean_id_imp) == 32 else clean_id_imp
 
                 with ThreadPoolExecutor(max_workers=3) as executor:
-                    for i, (idx, row) in enumerate(to_import_df.iterrows()):
+                    for _, row in to_import_df.iterrows():
                         obs_id = str(row["ID"])
                         obs = obs_map.get(obs_id)
                         if not obs:
@@ -2050,13 +2050,16 @@ elif nav_mode == "📊 Tableau de Bord":
                     total_tasks = len(futures)
                     if total_tasks > 0:
                         for i, future in enumerate(as_completed(futures)):
-                            success_item, error_msg = future.result()
-                            if success_item:
-                                success_log.append(success_item)
-                            if error_msg:
-                                error_log.append(error_msg)
+                            try:
+                                success_item, error_msg = future.result()
+                                if success_item:
+                                    success_log.append(success_item)
+                                if error_msg:
+                                    error_log.append(error_msg)
+                            except Exception as fut_err:
+                                error_log.append(f"Erreur système durant l'import : {fut_err!s}")
                             
-                            # Update progress in main thread
+                            # Update progress in main thread even if a task failed
                             progress_bar.progress((i + 1) / total_tasks)
                             status_text.text(f"Traitement en cours... ({i+1}/{total_tasks})")
                     else:
