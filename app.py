@@ -1991,20 +1991,24 @@ elif nav_mode == "📊 Tableau de Bord":
                 error_log = []
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
-                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, props_schema):
+                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id):
                     """
-                    Fonction de travail pour l'importation multi-threadée d'une observation.
+                    Import a single iNaturalist observation into the configured Notion database as a new page.
                     
-                    Args:
-                        row (pd.Series): Ligne du DataFrame à importer.
-                        obs_obj (dict): Données brutes iNaturalist.
-                        current_inat (str): Nom d'utilisateur iNat actuel.
-                        real_name_notion (str): Nom d'affichage Notion.
-                        fmt_db_id (str): ID formaté de la base de données.
-                        props_schema (dict): Schéma des propriétés Notion.
-                        
+                    Parameters:
+                        row (Mapping): A row from the import dataframe containing at least "Taxon", "ID", and "No° Fongarium".
+                        obs_obj (Mapping): The full iNaturalist observation object used to populate Notion properties (user, dates, photos, location, description, uri, tags, etc.).
+                        current_inat (str | None): Current iNaturalist username for the authenticated user; used to map to a Notion display name when matching the observation's user.
+                        real_name_notion (str | None): The display name to set in the Notion "Mycologue" select property when current_inat matches the observation's user.
+                        fmt_db_id (str): Notion database ID where the new page will be created.
+                    
                     Returns:
-                        tuple: (success_item, error_msg)
+                        tuple:
+                            - success (dict | None): If successful, a dict with keys "name" (scientific name), "id" (iNaturalist observation id), and "url" (Notion page url); otherwise None.
+                            - error_or_warning (str | None): If the import failed, an error message; if the import succeeded but QR code update failed, a warning message; otherwise None.
+                    
+                    Side effects:
+                        - Creates a new page in Notion with mapped properties, optional photo children blocks, and attempts to update QR code file properties.
                     """
                     sci_name = row["Taxon"]
                     obs_id = str(row["ID"])
