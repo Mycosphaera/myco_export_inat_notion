@@ -1151,10 +1151,13 @@ elif nav_mode == "📊 Tableau de Bord":
                                         # 2. Pre-fetch them in parallel (skipping those already in cache)
                                         to_fetch = [uid for uid in ids_to_resolve if uid not in relation_cache]
                                         if to_fetch:
-                                            # Using the existing ThreadPoolExecutor workers limit
                                             with ThreadPoolExecutor(max_workers=5) as executor:
-                                                # Consuming the iterator to ensure completion and error propagation
-                                                list(executor.map(get_relation_name, to_fetch))
+                                                futs = {executor.submit(get_relation_name, uid): uid for uid in to_fetch}
+                                                for fut in as_completed(futs):
+                                                    try:
+                                                        fut.result()
+                                                    except Exception:
+                                                        pass  # Error handling already done inside get_relation_name
 
                                         # 3. Main processing loop (now extremely fast as it hits the cache)
                                         for idx, row in selected_rows.iterrows():
