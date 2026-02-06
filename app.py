@@ -1272,8 +1272,7 @@ elif nav_mode == "📊 Tableau de Bord":
                                  st.download_button("📥 Télécharger", st.session_state['notion_pdf'], "etiquettes_notion.pdf", "application/pdf")
     
                     else:
-                        if resp_query.status_code == 200:
-                            st.info("Aucun résultat pour cette recherche.")
+                        st.info("Aucun résultat pour cette recherche.")
                 except Exception as e:
                      st.error(f"Erreur Notion Load: {e}")
             else:
