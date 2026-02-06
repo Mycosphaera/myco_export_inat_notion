@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_autocomplete
 from notion_client import Client
+from notion_client.errors import APIResponseError
 from datetime import date, timedelta
 from labels import generate_label_pdf
 from database import get_user_by_email, create_user_profile, log_action, update_user_profile
@@ -41,6 +42,41 @@ if 'username' not in st.session_state:
     st.session_state.username = ""
 if 'user_info' not in st.session_state:
     st.session_state.user_info = {} # To store full profile
+if 'props_schema' not in st.session_state:
+    st.session_state.props_schema = {}
+
+@st.cache_data(ttl=600, show_spinner="Chargement du schéma Notion...")
+def fetch_notion_schema(token, db_id):
+    """
+    Récupère le schéma (propriétés) de la base de données Notion.
+    
+    Args:
+        token (str): Token Notion.
+        db_id (str): ID de la base.
+        
+    Returns:
+        dict: Dictionnaire des propriétés de la base.
+    """
+    if not token or not db_id:
+        return {}
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    
+    api_url_db = f"https://api.notion.com/v1/databases/{db_id}"
+    try:
+        resp = requests.get(api_url_db, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            return resp.json().get("properties", {})
+        else:
+            print(f"Notion Schema Error {resp.status_code}: {resp.text}")
+            return {}
+    except Exception as e:
+        print(f"Notion Schema Exception: {e}")
+        return {}
 
 def get_notion_mycologists():
     """
@@ -51,15 +87,12 @@ def get_notion_mycologists():
     """
     try:
         if not has_secrets: return []
-        # On utilise le client global 'notion' initialisé plus bas, ou on le recrée localement
-        # Pour être sûr, on le recrée ici car 'notion' est init plus bas dans le script
-        local_notion = Client(auth=NOTION_TOKEN, notion_version="2022-06-28") 
-        
-        db = local_notion.databases.retrieve(DATABASE_ID)
-        props = db.get("properties", {})
+        props = fetch_notion_schema(NOTION_TOKEN, DATABASE_ID)
         
         # On cherche la colonne "Mycologue" (Select ou Multi-select)
-        myco_prop = props.get("Mycologue", {})
+        # On utilise une recherche insensible à la casse pour plus de robustesse
+        myco_key = next((k for k in props if "mycologue" in k.lower()), "Mycologue")
+        myco_prop = props.get(myco_key, {})
         options = []
         
         if myco_prop.get("type") == "select":
@@ -461,6 +494,7 @@ def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
                 break
                 
     return all_results[:max_fetch]
+
 def constants_extract_text(prop_obj):
     """
     Extrait le texte brut d'une propriété Notion (Rich Text ou Titre).
@@ -605,6 +639,10 @@ elif nav_mode == "📊 Tableau de Bord":
 
     # --- DASHBOARD STATS ---
     if st.session_state.authenticated:
+        # Pre-fetch Notion schema for dynamic key detection if not already present
+        if not st.session_state.get('props_schema') and has_secrets:
+            st.session_state['props_schema'] = fetch_notion_schema(NOTION_TOKEN, DATABASE_ID)
+            
         st_col1, st_col2, st_col3 = st.columns(3)
         
         # Stat 1: iNat Total
@@ -740,16 +778,12 @@ elif nav_mode == "📊 Tableau de Bord":
                 }
                 
                 try:
-                    # 1. Fetch Schema (GET /v1/databases/{id})
-                    api_url_db = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
-                    resp_schema = requests.get(api_url_db, headers=headers)
+                    # 1. Fetch Schema (Cached)
+                    props_schema = fetch_notion_schema(NOTION_TOKEN, DATABASE_ID)
+                    st.session_state['props_schema'] = props_schema
                     
-                    if resp_schema.status_code != 200:
-                        st.error(f"Notion Error {resp_schema.status_code}: {resp_schema.text}")
-                        props_schema = {}
-                    else:
-                        db_info = resp_schema.json()
-                        props_schema = db_info.get("properties", {})
+                    if not props_schema:
+                        st.error("Impossible de récupérer le schéma de la base de données Notion.")
     
                     # Extract Select Options
                     myco_options = []
@@ -1002,8 +1036,6 @@ elif nav_mode == "📊 Tableau de Bord":
                     else:
                         all_results = all_results_raw
                     
-                    if max_fetch > 100:
-                        prog_text.empty() # Clear text (if it was used)
                     
                     rows_notion = []
                     # Process results... (Use all_results)
@@ -1273,8 +1305,7 @@ elif nav_mode == "📊 Tableau de Bord":
                                  st.download_button("📥 Télécharger", st.session_state['notion_pdf'], "etiquettes_notion.pdf", "application/pdf")
     
                     else:
-                        if resp_query.status_code == 200:
-                            st.info("Aucun résultat pour cette recherche.")
+                        st.info("Aucun résultat pour cette recherche.")
                 except Exception as e:
                      st.error(f"Erreur Notion Load: {e}")
             else:
@@ -1964,18 +1995,21 @@ elif nav_mode == "📊 Tableau de Bord":
                 st.warning("Aucune observation cochée pour l'import.")
             elif NOTION_TOKEN and DATABASE_ID:
                 # Resolve Notion Fongarium Column Name (Dynamic)
-                import_props_schema = props_schema if 'props_schema' in locals() else {}
+                import_props_schema = st.session_state.get('props_schema', {})
                 
                 fong_col_imp_name = "No° fongarium"
                 
                 if import_props_schema:
                     fong_candidates = ["No° fongarium", "No fongarium", "Numéro fongarium", "Code fongarium"]
+                    found = False
                     for cand in fong_candidates:
                         if cand in import_props_schema:
                             fong_col_imp_name = cand
+                            found = True
                             break
-                        if fong_col_imp_name == "No° fongarium":
-                             fong_col_imp_name = next((k for k,v in import_props_schema.items() if "fongarium" in k.lower() and v["type"] not in ["checkbox", "formula"]), "No° fongarium")
+                    
+                    if not found:
+                         fong_col_imp_name = next((k for k,v in import_props_schema.items() if "fongarium" in k.lower() and v["type"] not in ["checkbox", "formula"]), "No° fongarium")
                 
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -1991,7 +2025,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 error_log = []
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
-                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id):
+                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, db_props_schema, notion_instance, fong_col_name):
                     """
                     Import a single iNaturalist observation into the configured Notion database as a new page.
                     
@@ -2001,6 +2035,9 @@ elif nav_mode == "📊 Tableau de Bord":
                         current_inat (str | None): Current iNaturalist username for the authenticated user; used to map to a Notion display name when matching the observation's user.
                         real_name_notion (str | None): The display name to set in the Notion "Mycologue" select property when current_inat matches the observation's user.
                         fmt_db_id (str): Notion database ID where the new page will be created.
+                        db_props_schema (dict): Notion database properties schema for dynamic key detection.
+                        notion_instance (Client): Authenticated Notion Client instance.
+                        fong_col_name (str): The name of the Notion property for Fongarium code.
                     
                     Returns:
                         tuple:
@@ -2072,9 +2109,9 @@ elif nav_mode == "📊 Tableau de Bord":
                         if photo_files_payload: props["Photo macro"] = {"files": photo_files_payload}
                         
                         if fong_code:
-                            props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
+                            props[fong_col_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
                         elif tag_string:
-                            props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}]}
+                            props[fong_col_name] = {"rich_text": [{"text": {"content": tag_string}}]}
                         
                         description = obs_obj.get('description', '')
                         if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
@@ -2102,19 +2139,29 @@ elif nav_mode == "📊 Tableau de Bord":
                             for attempt in range(max_retries):
                                 try:
                                     return func(**kwargs)
-                                except Exception as e:
+                                except APIResponseError as e:
                                     # Status 429 is Rate Limit
-                                    if hasattr(e, "status") and e.status == 429:
+                                    if e.status == 429:
                                         if attempt == max_retries - 1:
                                             raise e
-                                        # Exponential backoff with jitter
-                                        sleep_time = (2 ** attempt) + random.uniform(0, 1)
-                                        time.sleep(sleep_time)
+                                        
+                                        # Use Retry-After header if available, otherwise exponential backoff
+                                        retry_after = e.headers.get("Retry-After")
+                                        try:
+                                            wait_time = float(retry_after) if retry_after else (2 ** attempt) + random.uniform(0, 1)
+                                        except ValueError:
+                                            wait_time = (2 ** attempt) + random.uniform(0, 1)
+                                            
+                                        time.sleep(wait_time)
                                     else:
                                         raise e
+                                except Exception as e:
+                                    # For broad network errors, we might still want a basic retry?
+                                    # But let's follow the recommendation to check specifically for APIResponseError.
+                                    raise e
 
                         new_page = call_notion_with_retry(
-                            notion.pages.create,
+                            notion_instance.pages.create,
                             parent={"database_id": fmt_db_id, "type": "database_id"},
                             properties=props,
                             children=children
@@ -2127,8 +2174,8 @@ elif nav_mode == "📊 Tableau de Bord":
                         if page_id:
                             qr_props = {}
                             # Detect keys dynamically
-                            qr_notion_key = next((k for k in props_schema if "qr" in k.lower() and "notion" in k.lower()), "Code QR (Notion)")
-                            qr_inat_key = next((k for k in props_schema if "qr" in k.lower() and "inat" in k.lower()), "Code QR (Inat)")
+                            qr_notion_key = next((k for k in db_props_schema if "qr" in k.lower() and "notion" in k.lower()), "Code QR (Notion)")
+                            qr_inat_key = next((k for k in db_props_schema if "qr" in k.lower() and "inat" in k.lower()), "Code QR (Inat)")
 
                             if p_url:
                                 encoded_p_url = quote(p_url, safe='')
@@ -2142,7 +2189,7 @@ elif nav_mode == "📊 Tableau de Bord":
 
                             if qr_props:
                                 try:
-                                    call_notion_with_retry(notion.pages.update, page_id=page_id, properties=qr_props)
+                                    call_notion_with_retry(notion_instance.pages.update, page_id=page_id, properties=qr_props)
                                 except Exception as qr_err:
                                     warning_msg = f"⚠️ Importation réussie mais échec de la mise à jour des QR Codes pour {sci_name} (ID: {obs_id}). Erreur : {qr_err!s}"
                                     return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
@@ -2170,7 +2217,7 @@ elif nav_mode == "📊 Tableau de Bord":
                             error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
                             continue
                         
-                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id, import_props_schema))
+                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id, import_props_schema, notion, fong_col_imp_name))
 
                     total_tasks = len(futures)
                     if total_tasks > 0:
