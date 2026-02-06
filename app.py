@@ -379,44 +379,43 @@ def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
     
     api_url_query = f"https://api.notion.com/v1/databases/{db_id}/query"
     
-    all_results = []
-    has_more = True
-    next_cursor = None
-    
-    # Safety Cap for recursion to avoid timeouts in cache
-    # But max_fetch controls this.
-    
-    while has_more and len(all_results) < max_fetch:
-        # Payload
-        query_payload = {
-            "page_size": min(100, max_fetch - len(all_results)), # Max 100 per API call
-            "sorts": [{"timestamp": "created_time", "direction": "descending"}]
-        }
+    # Use a session for connection pooling
+    with requests.Session() as session:
+        session.headers.update(headers)
         
-        if notion_filter_and:
-             query_payload["filter"] = {"and": notion_filter_and}
-             
-        if next_cursor:
-            query_payload["start_cursor"] = next_cursor
-        
-        resp_query = requests.post(api_url_query, headers=headers, json=query_payload)
-        
-        if resp_query.status_code != 200:
-             # st.error? We are in a cached function. Returning error might be bad.
-             # Return what we have.
-             print(f"Fetch Error: {resp_query.text}")
-             break
-        else:
-            data = resp_query.json()
-            batch = data.get("results", [])
-            all_results.extend(batch)
+        # NOTE: Notion pagination is sequential (cursor-based).
+        # We fetch pages one by one to respect the API design.
+        while has_more and len(all_results) < max_fetch:
+            page_size = min(100, max_fetch - len(all_results))
+            query_payload = {
+                "page_size": page_size,
+                "sorts": [{"timestamp": "created_time", "direction": "descending"}]
+            }
             
-            has_more = data.get("has_more", False)
-            next_cursor = data.get("next_cursor")
+            if notion_filter_and:
+                query_payload["filter"] = {"and": notion_filter_and}
+                
+            if next_cursor:
+                query_payload["start_cursor"] = next_cursor
             
-            if max_fetch <= 100 and len(all_results) >= max_fetch: break
-            
-    return all_results
+            try:
+                resp_query = session.post(api_url_query, json=query_payload, timeout=15)
+                resp_query.raise_for_status()
+                
+                data = resp_query.json()
+                batch = data.get("results", [])
+                all_results.extend(batch)
+                
+                has_more = data.get("has_more", False)
+                next_cursor = data.get("next_cursor")
+                
+                if len(all_results) >= max_fetch:
+                    break
+            except Exception as e:
+                print(f"Fetch Error: {e}")
+                break
+                
+    return all_results[:max_fetch]
 
 def constants_extract_text(prop_obj):
     # Helper to extract text from Rich Text property safely
