@@ -1925,6 +1925,24 @@ elif nav_mode == "📊 Tableau de Bord":
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
                 def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id):
+                    """
+                    Import a single iNaturalist observation into the configured Notion database as a new page.
+                    
+                    Parameters:
+                        row (Mapping): A row from the import dataframe containing at least "Taxon", "ID", and "No° Fongarium".
+                        obs_obj (Mapping): The full iNaturalist observation object used to populate Notion properties (user, dates, photos, location, description, uri, tags, etc.).
+                        current_inat (str | None): Current iNaturalist username for the authenticated user; used to map to a Notion display name when matching the observation's user.
+                        real_name_notion (str | None): The display name to set in the Notion "Mycologue" select property when current_inat matches the observation's user.
+                        fmt_db_id (str): Notion database ID where the new page will be created.
+                    
+                    Returns:
+                        tuple:
+                            - success (dict | None): If successful, a dict with keys "name" (scientific name), "id" (iNaturalist observation id), and "url" (Notion page url); otherwise None.
+                            - error_or_warning (str | None): If the import failed, an error message; if the import succeeded but QR code update failed, a warning message; otherwise None.
+                    
+                    Side effects:
+                        - Creates a new page in Notion with mapped properties, optional photo children blocks, and attempts to update QR code file properties.
+                    """
                     sci_name = row["Taxon"]
                     obs_id = str(row["ID"])
                     
