@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 from pyinaturalist import get_observations, get_places_autocomplete, get_taxa_autocomplete
 from notion_client import Client
+from notion_client.errors import APIResponseError
 from datetime import date, timedelta
 from labels import generate_label_pdf
 from database import get_user_by_email, create_user_profile, log_action, update_user_profile
@@ -2024,7 +2025,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 error_log = []
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
-                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, props_schema):
+                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, db_props_schema, notion_instance, fong_col_name):
                     """
                     Import a single iNaturalist observation into the configured Notion database as a new page.
                     
@@ -2034,7 +2035,9 @@ elif nav_mode == "📊 Tableau de Bord":
                         current_inat (str | None): Current iNaturalist username for the authenticated user; used to map to a Notion display name when matching the observation's user.
                         real_name_notion (str | None): The display name to set in the Notion "Mycologue" select property when current_inat matches the observation's user.
                         fmt_db_id (str): Notion database ID where the new page will be created.
-                        props_schema (dict): Notion database properties schema for dynamic key detection.
+                        db_props_schema (dict): Notion database properties schema for dynamic key detection.
+                        notion_instance (Client): Authenticated Notion Client instance.
+                        fong_col_name (str): The name of the Notion property for Fongarium code.
                     
                     Returns:
                         tuple:
@@ -2106,9 +2109,9 @@ elif nav_mode == "📊 Tableau de Bord":
                         if photo_files_payload: props["Photo macro"] = {"files": photo_files_payload}
                         
                         if fong_code:
-                            props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
+                            props[fong_col_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
                         elif tag_string:
-                            props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}]}
+                            props[fong_col_name] = {"rich_text": [{"text": {"content": tag_string}}]}
                         
                         description = obs_obj.get('description', '')
                         if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
@@ -2136,19 +2139,29 @@ elif nav_mode == "📊 Tableau de Bord":
                             for attempt in range(max_retries):
                                 try:
                                     return func(**kwargs)
-                                except Exception as e:
+                                except APIResponseError as e:
                                     # Status 429 is Rate Limit
-                                    if hasattr(e, "status") and e.status == 429:
+                                    if e.status == 429:
                                         if attempt == max_retries - 1:
                                             raise e
-                                        # Exponential backoff with jitter
-                                        sleep_time = (2 ** attempt) + random.uniform(0, 1)
-                                        time.sleep(sleep_time)
+                                        
+                                        # Use Retry-After header if available, otherwise exponential backoff
+                                        retry_after = e.headers.get("Retry-After")
+                                        try:
+                                            wait_time = float(retry_after) if retry_after else (2 ** attempt) + random.uniform(0, 1)
+                                        except ValueError:
+                                            wait_time = (2 ** attempt) + random.uniform(0, 1)
+                                            
+                                        time.sleep(wait_time)
                                     else:
                                         raise e
+                                except Exception as e:
+                                    # For broad network errors, we might still want a basic retry?
+                                    # But let's follow the recommendation to check specifically for APIResponseError.
+                                    raise e
 
                         new_page = call_notion_with_retry(
-                            notion.pages.create,
+                            notion_instance.pages.create,
                             parent={"database_id": fmt_db_id, "type": "database_id"},
                             properties=props,
                             children=children
@@ -2161,8 +2174,8 @@ elif nav_mode == "📊 Tableau de Bord":
                         if page_id:
                             qr_props = {}
                             # Detect keys dynamically
-                            qr_notion_key = next((k for k in props_schema if "qr" in k.lower() and "notion" in k.lower()), "Code QR (Notion)")
-                            qr_inat_key = next((k for k in props_schema if "qr" in k.lower() and "inat" in k.lower()), "Code QR (Inat)")
+                            qr_notion_key = next((k for k in db_props_schema if "qr" in k.lower() and "notion" in k.lower()), "Code QR (Notion)")
+                            qr_inat_key = next((k for k in db_props_schema if "qr" in k.lower() and "inat" in k.lower()), "Code QR (Inat)")
 
                             if p_url:
                                 encoded_p_url = quote(p_url, safe='')
@@ -2176,7 +2189,7 @@ elif nav_mode == "📊 Tableau de Bord":
 
                             if qr_props:
                                 try:
-                                    call_notion_with_retry(notion.pages.update, page_id=page_id, properties=qr_props)
+                                    call_notion_with_retry(notion_instance.pages.update, page_id=page_id, properties=qr_props)
                                 except Exception as qr_err:
                                     warning_msg = f"⚠️ Importation réussie mais échec de la mise à jour des QR Codes pour {sci_name} (ID: {obs_id}). Erreur : {qr_err!s}"
                                     return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
@@ -2204,7 +2217,7 @@ elif nav_mode == "📊 Tableau de Bord":
                             error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
                             continue
                         
-                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id, import_props_schema))
+                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id, import_props_schema, notion, fong_col_imp_name))
 
                     total_tasks = len(futures)
                     if total_tasks > 0:
