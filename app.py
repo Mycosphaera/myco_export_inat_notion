@@ -385,6 +385,10 @@ def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
     with requests.Session() as session:
         session.headers.update(headers)
         
+        all_results = []
+        has_more = True
+        next_cursor = None
+
         # NOTE: Notion pagination is sequential (cursor-based).
         # We fetch pages one by one to respect the API design.
         while has_more and len(all_results) < max_fetch:
@@ -418,7 +422,6 @@ def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
                 break
                 
     return all_results[:max_fetch]
-
 def constants_extract_text(prop_obj):
     # Helper to extract text from Rich Text property safely
     if not prop_obj: return ""
@@ -2026,7 +2029,6 @@ elif nav_mode == "📊 Tableau de Bord":
                         return (None, f"{sci_name} (ID: {obs_id}) : {e!s}")
 
                 # --- EXECUTION WITH THREADPOOL ---
-                total_imp = len(to_import_df)
                 futures = []
                 
                 current_inat_val = st.session_state.get('inat_username', "")
@@ -2042,16 +2044,21 @@ elif nav_mode == "📊 Tableau de Bord":
                         
                         futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val))
 
-                    for i, future in enumerate(as_completed(futures)):
-                        success_item, error_msg = future.result()
-                        if success_item:
-                            success_log.append(success_item)
-                        if error_msg:
-                            error_log.append(error_msg)
-                        
-                        # Update progress in main thread
-                        progress_bar.progress((i + 1) / total_imp)
-                        status_text.text(f"Traitement en cours... ({i+1}/{total_imp})")
+                    total_tasks = len(futures)
+                    if total_tasks > 0:
+                        for i, future in enumerate(as_completed(futures)):
+                            success_item, error_msg = future.result()
+                            if success_item:
+                                success_log.append(success_item)
+                            if error_msg:
+                                error_log.append(error_msg)
+                            
+                            # Update progress in main thread
+                            progress_bar.progress((i + 1) / total_tasks)
+                            status_text.text(f"Traitement en cours... ({i+1}/{total_tasks})")
+                    else:
+                        progress_bar.progress(1.0)
+                        status_text.text("Aucune observation valide à importer.")
                 
                 status_text.empty()
                 
