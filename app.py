@@ -1991,7 +1991,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 error_log = []
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
-                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id):
+                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, props_schema):
                     """
                     Import a single iNaturalist observation into the configured Notion database as a new page.
                     
@@ -2001,6 +2001,7 @@ elif nav_mode == "📊 Tableau de Bord":
                         current_inat (str | None): Current iNaturalist username for the authenticated user; used to map to a Notion display name when matching the observation's user.
                         real_name_notion (str | None): The display name to set in the Notion "Mycologue" select property when current_inat matches the observation's user.
                         fmt_db_id (str): Notion database ID where the new page will be created.
+                        props_schema (dict): Notion database properties schema for dynamic key detection.
                     
                     Returns:
                         tuple:
