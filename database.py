@@ -41,14 +41,11 @@ def get_user_by_email(email):
     try:
         # On suppose que la colonne s'appelle 'email' ou qu'on utilise 'auth_username' comme email
         # Adaptez le nom de la colonne si besoin (dans Supabase, souvent 'email' ou 'auth_username')
-        print(f"🔍 Searching user: {email}")
         response = supabase.table("user_profiles").select("*").eq("auth_username", email).execute()
         
         if response.data and len(response.data) > 0:
-            print(f"✅ User found: {response.data[0]['auth_username']}")
             return response.data[0]
         else:
-            print("❌ User not found in DB request.")
             return None
     except Exception as e:
         print(f"Erreur DB (get_user): {e}")
