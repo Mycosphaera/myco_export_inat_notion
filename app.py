@@ -750,6 +750,7 @@ elif nav_mode == "📊 Tableau de Bord":
                     else:
                         db_info = resp_schema.json()
                         props_schema = db_info.get("properties", {})
+                        st.session_state['props_schema'] = props_schema
     
                     # Extract Select Options
                     myco_options = []
@@ -1964,7 +1965,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 st.warning("Aucune observation cochée pour l'import.")
             elif NOTION_TOKEN and DATABASE_ID:
                 # Resolve Notion Fongarium Column Name (Dynamic)
-                import_props_schema = props_schema if 'props_schema' in locals() else {}
+                import_props_schema = st.session_state.get('props_schema', {})
                 
                 fong_col_imp_name = "No° fongarium"
                 
