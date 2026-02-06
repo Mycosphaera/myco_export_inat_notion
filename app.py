@@ -1905,7 +1905,9 @@ elif nav_mode == "📊 Tableau de Bord":
                 for i, (idx, row) in enumerate(to_import_df.iterrows()):
                     obs_id = str(row["ID"])
                     obs = obs_map.get(obs_id)
-                    if not obs: continue 
+                    if not obs:
+                        error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
+                        continue 
                     
                     sci_name = row["Taxon"]
                     status_text.text(f"Importation de {sci_name} ({i+1}/{total_imp})...")
