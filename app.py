@@ -1995,9 +1995,10 @@ elif nav_mode == "📊 Tableau de Bord":
                     
                     # OTHER PROPS (Moved OUTSIDE the photo check to ensure they populate essentially)
                     if fong_code:
-                        props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
-                    elif tag_string: 
-                        props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}]}
+                        props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}] }
+                    # NOTE: Si les tags ne doivent PAS alimenter le champ fongarium, supprimer ce elif
+                    elif tag_string:
+                        props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}] }
                     
                     description = obs.get('description', '')
                     if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
@@ -2052,7 +2053,7 @@ elif nav_mode == "📊 Tableau de Bord":
                             try:
                                 notion.pages.update(page_id=page_id, properties={"Code QR": {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}})
                             except Exception as qr_err:
-                                error_log.append(f"QR {sci_name} (ID: {obs_id}) : {qr_err!s}")
+                                error_log.append(f"QR Code pour {sci_name} (ID: {obs_id}) : {qr_err!s}")
 
                     except Exception as e:
                         error_log.append(f"{sci_name} (ID: {obs_id}) : {e!s}")
