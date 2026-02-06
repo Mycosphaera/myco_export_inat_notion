@@ -1003,8 +1003,6 @@ elif nav_mode == "📊 Tableau de Bord":
                     else:
                         all_results = all_results_raw
                     
-                    if max_fetch > 100:
-                        prog_text.empty() # Clear text (if it was used)
                     
                     rows_notion = []
                     # Process results... (Use all_results)
