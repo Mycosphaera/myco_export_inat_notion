@@ -1995,9 +1995,9 @@ elif nav_mode == "📊 Tableau de Bord":
                     
                     # OTHER PROPS (Moved OUTSIDE the photo check to ensure they populate essentially)
                     if fong_code:
-                            props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
+                        props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
                     elif tag_string: 
-                            props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}]}
+                        props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}]}
                     
                     description = obs.get('description', '')
                     if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
