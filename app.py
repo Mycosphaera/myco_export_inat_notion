@@ -2048,10 +2048,11 @@ elif nav_mode == "📊 Tableau de Bord":
                             qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={p_url}"
                             try:
                                 notion.pages.update(page_id=page_id, properties={"Code QR": {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}})
-                            except: pass
+                            except Exception as qr_err:
+                                error_log.append(f"QR {sci_name} (ID: {obs_id}) : {qr_err!s}")
 
                     except Exception as e:
-                        error_log.append(f"{sci_name} (ID: {obs_id}) : {str(e)}")
+                        error_log.append(f"{sci_name} (ID: {obs_id}) : {e!s}")
                         st.warning(f"Erreur Notion sur {sci_name}: {e}")
                 
                     progress_bar.progress((i + 1) / total_imp)
