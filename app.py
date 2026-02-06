@@ -1918,7 +1918,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 error_log = []
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
-                def import_worker(row, obs_obj, current_inat, real_name_notion):
+                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id):
                     sci_name = row["Taxon"]
                     obs_id = str(row["ID"])
                     
@@ -2004,10 +2004,6 @@ elif nav_mode == "📊 Tableau de Bord":
                                     props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(coords[1])}}]}
                             except Exception: pass
 
-                        # --- SEND TO NOTION ---
-                        clean_id_imp = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
-                        fmt_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}" if len(clean_id_imp) == 32 else clean_id_imp
-                        
                         new_page = notion.pages.create(
                             parent={"database_id": fmt_db_id, "type": "database_id"},
                             properties=props,
@@ -2036,6 +2032,10 @@ elif nav_mode == "📊 Tableau de Bord":
                 current_inat_val = st.session_state.get('inat_username', "")
                 real_name_val = st.session_state.get('username', "")
                 
+                # Pre-calculate formatted Database ID once
+                clean_id_imp = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
+                formatted_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}" if len(clean_id_imp) == 32 else clean_id_imp
+
                 with ThreadPoolExecutor(max_workers=3) as executor:
                     for i, (idx, row) in enumerate(to_import_df.iterrows()):
                         obs_id = str(row["ID"])
@@ -2044,7 +2044,7 @@ elif nav_mode == "📊 Tableau de Bord":
                             error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
                             continue
                         
-                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val))
+                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id))
 
                     total_tasks = len(futures)
                     if total_tasks > 0:
