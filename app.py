@@ -1907,110 +1907,110 @@ elif nav_mode == "📊 Tableau de Bord":
                     status_text.text(f"Importation de {sci_name} ({i+1}/{total_imp})...")
                     
                     # --- DATA EXTRACTION & MAPPING ---
-                inat_login = obs.get('user', {}).get('login') or "Inconnu"
+                    inat_login = obs.get('user', {}).get('login') or "Inconnu"
                 
-                # USER LOGIC: If iNat login matches connected user, use Real Name (Notion Name)
-                # stored in st.session_state.username
-                user_name = inat_login
-                current_inat = st.session_state.get('inat_username', "")
-                if current_inat and inat_login.lower() == current_inat.lower():
-                     if st.session_state.username:
-                         user_name = st.session_state.username
+                    # USER LOGIC: If iNat login matches connected user, use Real Name (Notion Name)
+                    # stored in st.session_state.username
+                    user_name = inat_login
+                    current_inat = st.session_state.get('inat_username', "")
+                    if current_inat and inat_login.lower() == current_inat.lower():
+                         if st.session_state.username:
+                             user_name = st.session_state.username
 
-                observed_on = obs.get('time_observed_at')
-                if not observed_on:
-                    # Fallback to 'observed_on' (string YYYY-MM-DD or similar)
-                    obs_date_raw = obs.get('observed_on')
-                    if obs_date_raw:
-                        if hasattr(obs_date_raw, 'isoformat'):
-                            date_iso = obs_date_raw.isoformat()
+                    observed_on = obs.get('time_observed_at')
+                    if not observed_on:
+                        # Fallback to 'observed_on' (string YYYY-MM-DD or similar)
+                        obs_date_raw = obs.get('observed_on')
+                        if obs_date_raw:
+                            if hasattr(obs_date_raw, 'isoformat'):
+                                date_iso = obs_date_raw.isoformat()
+                            else:
+                                date_iso = str(obs_date_raw)
                         else:
-                            date_iso = str(obs_date_raw)
+                            date_iso = None
                     else:
-                        date_iso = None
-                else:
-                    date_iso = observed_on.isoformat()
+                        date_iso = observed_on.isoformat()
                     
-                obs_url = obs.get('uri')
+                    obs_url = obs.get('uri')
                 
-                tags = obs.get('tags', []) 
-                tag_string = ""
-                if tags:
-                    extracted_tags = []
-                    for t in tags:
-                        if isinstance(t, dict): extracted_tags.append(t.get('tag', ''))
-                        elif isinstance(t, str): extracted_tags.append(t)
-                        else: extracted_tags.append(str(t))
-                    tag_string = ", ".join(filter(None, extracted_tags))
+                    tags = obs.get('tags', []) 
+                    tag_string = ""
+                    if tags:
+                        extracted_tags = []
+                        for t in tags:
+                            if isinstance(t, dict): extracted_tags.append(t.get('tag', ''))
+                            elif isinstance(t, str): extracted_tags.append(t)
+                            else: extracted_tags.append(str(t))
+                        tag_string = ", ".join(filter(None, extracted_tags))
 
-                fong_code = row["No° Fongarium"]
+                    fong_code = row["No° Fongarium"]
                 
-                # PHOTOS LOGIC (Files & Media "Photo macro" + "Photo Inat" Legacy if needed)
-                photos = obs.get('photos', [])
+                    # PHOTOS LOGIC (Files & Media "Photo macro" + "Photo Inat" Legacy if needed)
+                    photos = obs.get('photos', [])
                 
-                # Construct Files Payload for "Photo macro"
-                photo_files_payload = []
-                for p in photos:
-                    # iNat images: square, small, medium, large, original
-                    # Use original or large for high quality
-                    p_url = p['url'].replace("square", "original")
-                    p_name = f"iNat {p['id']}"
-                    photo_files_payload.append({
-                        "name": p_name,
-                        "type": "external",
-                        "external": {"url": p_url}
-                    })
-
-                # Legacy: First photo URL purely for reference? (Maybe keep or discard, User asked for "Photo macro" column)
-                obs_url = obs.get('uri')
-
-                # Children (Gallery in Page Body - Optional but nice to keep)
-                children = []
-                if len(photos) > 0: # Add all photos to gallery, even if just 1
-                    children.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"text": {"content": "Galerie Photo"}}]}})
+                    # Construct Files Payload for "Photo macro"
+                    photo_files_payload = []
                     for p in photos:
-                        children.append({
-                            "object": "block", 
-                            "type": "image", 
-                            "image": {"type": "external", "external": {"url": p['url'].replace("square", "large")}}
+                        # iNat images: square, small, medium, large, original
+                        # Use original or large for high quality
+                        p_url = p['url'].replace("square", "original")
+                        p_name = f"iNat {p['id']}"
+                        photo_files_payload.append({
+                            "name": p_name,
+                            "type": "external",
+                            "external": {"url": p_url}
                         })
 
-                # Props
-                props = {}
-                props["Titre"] = {"title": [{"text": {"content": sci_name}}]}
-                if date_iso: props["Date"] = {"date": {"start": date_iso}}
+                    # Legacy: First photo URL purely for reference? (Maybe keep or discard, User asked for "Photo macro" column)
+                    obs_url = obs.get('uri')
+
+                    # Children (Gallery in Page Body - Optional but nice to keep)
+                    children = []
+                    if len(photos) > 0: # Add all photos to gallery, even if just 1
+                        children.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"text": {"content": "Galerie Photo"}}]}})
+                        for p in photos:
+                            children.append({
+                                "object": "block", 
+                                "type": "image", 
+                                "image": {"type": "external", "external": {"url": p['url'].replace("square", "large")}}
+                            })
+
+                    # Props
+                    props = {}
+                    props["Titre"] = {"title": [{"text": {"content": sci_name}}]}
+                    if date_iso: props["Date"] = {"date": {"start": date_iso}}
                 
-                # Mycologue
-                if user_name: props["Mycologue"] = {"select": {"name": user_name}}
+                    # Mycologue
+                    if user_name: props["Mycologue"] = {"select": {"name": user_name}}
                 
-                if obs_url: props["URL Inaturalist"] = {"url": obs_url}
+                    if obs_url: props["URL Inaturalist"] = {"url": obs_url}
                 
-                # PHOTO MACRO (Files & Media)
-                # PHOTO MACRO (Files & Media)
-                if photo_files_payload:
-                    props["Photo macro"] = {"files": photo_files_payload}
+                    # PHOTO MACRO (Files & Media)
+                    # PHOTO MACRO (Files & Media)
+                    if photo_files_payload:
+                        props["Photo macro"] = {"files": photo_files_payload}
                     
-                    if fong_code:
-                         props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
-                    elif tag_string: 
-                         props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}]}
+                        if fong_code:
+                             props[fong_col_imp_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
+                        elif tag_string: 
+                             props[fong_col_imp_name] = {"rich_text": [{"text": {"content": tag_string}}]}
                     
-                    description = obs.get('description', '')
-                    if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
+                        description = obs.get('description', '')
+                        if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
                     
-                    place_guess = obs.get('place_guess', '')
-                    if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
+                        place_guess = obs.get('place_guess', '')
+                        if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
                     
-                    # Coords
-                    lat = None; lon = None
-                    coords = obs.get('location')
-                    if coords:
-                        try:
-                            if isinstance(coords, str): parts = coords.split(','); lat = float(parts[0]); lon = float(parts[1])
-                            elif isinstance(coords, list) and len(coords) >= 2: lat = float(coords[0]); lon = float(coords[1])
-                        except: pass
-                    if lat: props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lat)}}]}
-                    if lon: props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lon)}}]}
+                        # Coords
+                        lat = None; lon = None
+                        coords = obs.get('location')
+                        if coords:
+                            try:
+                                if isinstance(coords, str): parts = coords.split(','); lat = float(parts[0]); lon = float(parts[1])
+                                elif isinstance(coords, list) and len(coords) >= 2: lat = float(coords[0]); lon = float(coords[1])
+                            except: pass
+                        if lat: props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lat)}}]}
+                        if lon: props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lon)}}]}
     
                     # SEND
                     try:
@@ -2019,13 +2019,13 @@ elif nav_mode == "📊 Tableau de Bord":
                         if len(clean_id_imp) == 32:
                             fmt_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}"
                         else: fmt_db_id = clean_id_imp
-                            
+                        
                         new_page = notion.pages.create(
                             parent={"database_id": fmt_db_id, "type": "database_id"},
                             properties=props,
                             children=children
                         )
-                        
+                    
                         # QR Code Logic
                         page_url = new_page.get('url')
                         page_id = new_page.get('id')
@@ -2034,10 +2034,10 @@ elif nav_mode == "📊 Tableau de Bord":
                             try:
                                 notion.pages.update(page_id=page_id, properties={"Code QR": {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}})
                             except: pass
-    
+
                     except Exception as e:
                         st.warning(f"Erreur Notion sur {sci_name}: {e}")
-                    
+                
                     progress_bar.progress((i + 1) / total_imp)
                 
                 status_text.text("✅ Importation terminée avec succès !")
