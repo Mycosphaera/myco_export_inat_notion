@@ -2002,7 +2002,8 @@ elif nav_mode == "📊 Tableau de Bord":
                                 elif isinstance(coords, list) and len(coords) >= 2:
                                     props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(coords[0])}}]}
                                     props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(coords[1])}}]}
-                            except Exception: pass
+                            except Exception as coord_err:
+                                print(f"Coord parse warning for {obs_id}: {coord_err}")
 
                         new_page = notion.pages.create(
                             parent={"database_id": fmt_db_id, "type": "database_id"},
