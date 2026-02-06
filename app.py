@@ -8,7 +8,10 @@ from labels import generate_label_pdf
 from database import get_user_by_email, create_user_profile, log_action, update_user_profile
 
 import re
+import time
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import quote
 
 
 
@@ -40,7 +43,12 @@ if 'user_info' not in st.session_state:
     st.session_state.user_info = {} # To store full profile
 
 def get_notion_mycologists():
-    """Récupère la liste des options de la propriété 'Mycologue' dans Notion"""
+    """
+    Récupère la liste des options de la propriété 'Mycologue' dans la base Notion.
+    
+    Returns:
+        list: Une liste triée des noms de mycologues disponibles.
+    """
     try:
         if not has_secrets: return []
         # On utilise le client global 'notion' initialisé plus bas, ou on le recrée localement
@@ -66,6 +74,10 @@ def get_notion_mycologists():
 
 # --- 3. FONCTION DE LOGIN / PORTAIL ---
 def login_page():
+    """
+    Affiche la page de connexion et de création de portail utilisateur.
+    Gère l'authentification et l'initialisation de la session.
+    """
     st.markdown("""
     <h1 style='text-align: center; color: #2E8B57;'>🍄 Portail Myco</h1>
     <p style='text-align: center;'>Identifiez-vous pour accéder à vos outils.</p>
@@ -173,8 +185,8 @@ if not st.session_state.authenticated:
 # --- CALLBACKS ---
 def sync_editor_changes():
     """
-    Callback to sync changes from data_editor back to main_import_df immediately.
-    Handles filtered views by using stored indices.
+    Synchronise les modifications du data_editor vers le DataFrame principal.
+    Gère la correspondance des indices dans les vues filtrées.
     """
     try:
         current_key = f"main_editor_{st.session_state.get('editor_key_version', 0)}"
@@ -204,6 +216,12 @@ def sync_editor_changes():
 # --- HELPER FUNCTIONS ---
 @st.dialog("🍄 Détails de l'observation")
 def show_details(obs_data):
+    """
+    Affiche une fenêtre modale avec les détails complets d'une observation.
+    
+    Args:
+        obs_data (dict): Les données de l'observation à afficher.
+    """
     # Large Image
     if obs_data.get('Image'):
         st.image(obs_data['Image'].replace("small", "large"), use_container_width=True)
@@ -226,8 +244,15 @@ def show_details(obs_data):
 @st.cache_data(ttl=300, show_spinner=False)
 def count_user_notion_obs(token, db_id, target_user):
     """
-    Compte précis des observations Notion filtrées par utilisateur.
-    Met en cache le résultat pour 5 minutes.
+    Compte les observations Notion filtrées par utilisateur.
+    
+    Args:
+        token (str): Token d'intégration Notion.
+        db_id (str): ID de la base de données.
+        target_user (str): Nom du mycologue cible.
+        
+    Returns:
+        int: Nombre total d'observations trouvées.
     """
     if not token or not db_id or not target_user: return 0
     
@@ -281,9 +306,16 @@ def count_user_notion_obs(token, db_id, target_user):
 @st.cache_data(ttl=600, show_spinner=False)
 def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
     """
-    Récupère le dernier numéro de fongarium attribué pour un utilisateur donné.
-    Ignore les codes temporaires (XXXX).
-    Retourne (dernier_code, code_suivant_suggéré).
+    Récupère le dernier numéro de fongarium attribué pour un utilisateur.
+    
+    Args:
+        token (str): Token d'intégration Notion.
+        db_id (str): ID de la base de données.
+        target_user (str): Nom du mycologue.
+        prefix (str): Préfixe du code fongarium (ex: 'MRD').
+        
+    Returns:
+        tuple: (dernier_code_trouvé, code_suivant_suggéré)
     """
     if not token or not db_id or not target_user or not prefix: return None, None
 
@@ -367,9 +399,16 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
 @st.cache_data(ttl=300, show_spinner="Chargement Notion...")
 def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
     """
-    Cached function to fetch Notion data.
-    notion_filter_and: The list of AND clauses for the filter.
-    Returns: list of results
+    Récupère les données de la base Notion avec filtres et limite.
+    
+    Args:
+        token (str): Token Notion.
+        db_id (str): ID de la base.
+        notion_filter_and (list): Clauses de filtrage Notion.
+        max_fetch (int): Limite maximale de résultats.
+        
+    Returns:
+        list: Liste des résultats de la requête Notion.
     """
     if not token or not db_id: return []
     
@@ -423,6 +462,15 @@ def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
                 
     return all_results[:max_fetch]
 def constants_extract_text(prop_obj):
+    """
+    Extrait le texte brut d'une propriété Notion (Rich Text ou Titre).
+    
+    Args:
+        prop_obj (dict): Objet propriété provenant de l'API Notion.
+        
+    Returns:
+        str: Texte extrait ou chaîne vide.
+    """
     # Helper to extract text from Rich Text property safely
     if not prop_obj: return ""
     rtype = prop_obj.get("type")
@@ -966,6 +1014,15 @@ elif nav_mode == "📊 Tableau de Bord":
                         
                         # Helpers to extract text safely
                         def get_prop_text(p_dict):
+                            """
+                            Extrait le texte d'un dictionnaire de propriété Notion selon son type.
+                            
+                            Args:
+                                p_dict (dict): Dictionnaire de la propriété.
+                                
+                            Returns:
+                                str: Contenu textuel de la propriété.
+                            """
                             if not p_dict: return ""
                             ptype = p_dict["type"]
                             if ptype == "title" and p_dict["title"]:
@@ -1112,6 +1169,16 @@ elif nav_mode == "📊 Tableau de Bord":
                             relation_cache = {}
                             
                             def get_relation_name(page_id):
+                                """
+                                Récupère le nom (titre) d'une page liée par relation.
+                                Utilise un cache local pour éviter les appels API redondants.
+                                
+                                Args:
+                                    page_id (str): ID de la page Notion cible.
+                                    
+                                Returns:
+                                    str: Titre de la page ou 'Inconnu'/'Erreur'.
+                                """
                                 if not page_id: return ""
                                 if page_id in relation_cache: return relation_cache[page_id]
                                 
@@ -1154,10 +1221,13 @@ elif nav_mode == "📊 Tableau de Bord":
                                             with ThreadPoolExecutor(max_workers=5) as executor:
                                                 futs = {executor.submit(get_relation_name, uid): uid for uid in to_fetch}
                                                 for fut in as_completed(futs):
+                                                    uid = futs[fut]
                                                     try:
                                                         fut.result()
-                                                    except Exception:
-                                                        pass  # Error handling already done inside get_relation_name
+                                                    except Exception as e:
+                                                        print(f"Error fetching relation name for {uid}: {e}")
+                                                        # Internal error handling in get_relation_name usually returns 'Erreur' 
+                                                        # but we log the unexpected exception here just in case.
 
                                         # 3. Main processing loop (now extremely fast as it hits the cache)
                                         for idx, row in selected_rows.iterrows():
@@ -1921,7 +1991,21 @@ elif nav_mode == "📊 Tableau de Bord":
                 error_log = []
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
-                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id):
+                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, props_schema):
+                    """
+                    Fonction de travail pour l'importation multi-threadée d'une observation.
+                    
+                    Args:
+                        row (pd.Series): Ligne du DataFrame à importer.
+                        obs_obj (dict): Données brutes iNaturalist.
+                        current_inat (str): Nom d'utilisateur iNat actuel.
+                        real_name_notion (str): Nom d'affichage Notion.
+                        fmt_db_id (str): ID formaté de la base de données.
+                        props_schema (dict): Schéma des propriétés Notion.
+                        
+                    Returns:
+                        tuple: (success_item, error_msg)
+                    """
                     sci_name = row["Taxon"]
                     obs_id = str(row["ID"])
                     
@@ -2008,7 +2092,25 @@ elif nav_mode == "📊 Tableau de Bord":
                             except Exception as coord_err:
                                 print(f"Coord parse warning for {obs_id}: {coord_err}")
 
-                        new_page = notion.pages.create(
+                        # --- SEND TO NOTION WITH RETRY ---
+                        def call_notion_with_retry(func, **kwargs):
+                            max_retries = 5
+                            for attempt in range(max_retries):
+                                try:
+                                    return func(**kwargs)
+                                except Exception as e:
+                                    # Status 429 is Rate Limit
+                                    if hasattr(e, "status") and e.status == 429:
+                                        if attempt == max_retries - 1:
+                                            raise e
+                                        # Exponential backoff with jitter
+                                        sleep_time = (2 ** attempt) + random.uniform(0, 1)
+                                        time.sleep(sleep_time)
+                                    else:
+                                        raise e
+
+                        new_page = call_notion_with_retry(
+                            notion.pages.create,
                             parent={"database_id": fmt_db_id, "type": "database_id"},
                             properties=props,
                             children=children
@@ -2017,13 +2119,29 @@ elif nav_mode == "📊 Tableau de Bord":
                         p_url = new_page.get('url')
                         page_id = new_page.get('id')
                         
-                        # QR Code
-                        if p_url and page_id:
-                            qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={p_url}"
-                            try:
-                                notion.pages.update(page_id=page_id, properties={"Code QR": {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}})
-                            except Exception as qr_err:
-                                return (None, f"⚠️ Importation réussie mais échec du QR Code pour {sci_name} (ID: {obs_id}). Page créée : {p_url}. Erreur : {qr_err!s}")
+                        # QR Codes
+                        if page_id:
+                            qr_props = {}
+                            # Detect keys dynamically
+                            qr_notion_key = next((k for k in props_schema if "qr" in k.lower() and "notion" in k.lower()), "Code QR (Notion)")
+                            qr_inat_key = next((k for k in props_schema if "qr" in k.lower() and "inat" in k.lower()), "Code QR (Inat)")
+
+                            if p_url:
+                                encoded_p_url = quote(p_url, safe='')
+                                qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={encoded_p_url}"
+                                qr_props[qr_notion_key] = {"files": [{"name": "notion_qr.png", "type": "external", "external": {"url": qr_api_url}}]}
+                            
+                            if obs_url:
+                                encoded_obs_url = quote(obs_url, safe='')
+                                inat_qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={encoded_obs_url}"
+                                qr_props[qr_inat_key] = {"files": [{"name": "inat_qr.png", "type": "external", "external": {"url": inat_qr_url}}]}
+
+                            if qr_props:
+                                try:
+                                    call_notion_with_retry(notion.pages.update, page_id=page_id, properties=qr_props)
+                                except Exception as qr_err:
+                                    warning_msg = f"⚠️ Importation réussie mais échec de la mise à jour des QR Codes pour {sci_name} (ID: {obs_id}). Erreur : {qr_err!s}"
+                                    return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
 
                         return ({"name": sci_name, "id": obs_id, "url": p_url}, None)
 
@@ -2040,7 +2158,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 clean_id_imp = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
                 formatted_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}" if len(clean_id_imp) == 32 else clean_id_imp
 
-                with ThreadPoolExecutor(max_workers=3) as executor:
+                with ThreadPoolExecutor(max_workers=2) as executor:
                     for _, row in to_import_df.iterrows():
                         obs_id = str(row["ID"])
                         obs = obs_map.get(obs_id)
@@ -2048,7 +2166,7 @@ elif nav_mode == "📊 Tableau de Bord":
                             error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
                             continue
                         
-                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id))
+                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id, import_props_schema))
 
                     total_tasks = len(futures)
                     if total_tasks > 0:
