@@ -1,10 +1,10 @@
 streamlit>=1.42.0
 pandas
 pyinaturalist
+requests-ratelimiter
 notion-client
 requests
 st-styled
 reportlab
 qrcode[pil]
 supabase>=0.14.0
-st-styled
