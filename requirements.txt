@@ -1,6 +1,6 @@
 streamlit>=1.42.0
 pandas
-pyinaturalist>=1.6.1
+pyinaturalist
 requests-ratelimiter>=0.9.0
 notion-client
 requests
