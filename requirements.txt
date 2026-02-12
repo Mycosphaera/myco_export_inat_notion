@@ -1,6 +1,7 @@
 streamlit>=1.42.0
 pandas
 pyinaturalist
+pyrate-limiter<3
 notion-client
 requests
 st-styled
