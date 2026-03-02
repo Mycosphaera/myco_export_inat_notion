@@ -2122,14 +2122,42 @@ elif nav_mode == "📊 Tableau de Bord":
                         coords = obs_obj.get('location')
                         if coords:
                             try:
+                                lat_val = None
+                                lng_val = None
                                 if isinstance(coords, str):
                                     parts = coords.split(',')
                                     if len(parts) >= 2:
-                                        props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": parts[0].strip()}}]}
-                                        props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": parts[1].strip()}}]}
+                                        lat_val = parts[0].strip()
+                                        lng_val = parts[1].strip()
                                 elif isinstance(coords, list) and len(coords) >= 2:
-                                    props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(coords[0])}}]}
-                                    props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(coords[1])}}]}
+                                    lat_val = str(coords[0])
+                                    lng_val = str(coords[1])
+                                
+                                if lat_val and lng_val:
+                                    lat_key = "Latitude (sexadécimal)"
+                                    if lat_key not in db_props_schema:
+                                        lat_key = next((k for k in db_props_schema if "lat" in k.lower() and "re" not in k.lower()), "Latitude")
+                                        
+                                    lng_key = "Longitude (sexadécimal)"
+                                    if lng_key not in db_props_schema:
+                                        lng_key = next((k for k in db_props_schema if "long" in k.lower()), "Longitude")
+
+                                    if lat_key in db_props_schema:
+                                        if db_props_schema[lat_key]["type"] == "number":
+                                            props[lat_key] = {"number": float(lat_val)}
+                                        else:
+                                            props[lat_key] = {"rich_text": [{"text": {"content": str(lat_val)}}]}
+                                    else:
+                                        props["Latitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lat_val)}}]}
+
+                                    if lng_key in db_props_schema:
+                                        if db_props_schema[lng_key]["type"] == "number":
+                                            props[lng_key] = {"number": float(lng_val)}
+                                        else:
+                                            props[lng_key] = {"rich_text": [{"text": {"content": str(lng_val)}}]}
+                                    else:
+                                        props["Longitude (sexadécimal)"] = {"rich_text": [{"text": {"content": str(lng_val)}}]}
+
                             except Exception as coord_err:
                                 print(f"Coord parse warning for {obs_id}: {coord_err}")
 
