@@ -13,7 +13,7 @@ import time
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote
-
+import csv_cleaner
 
 
 # --- SECRETS MANAGEMENT ---
@@ -692,7 +692,7 @@ elif nav_mode == "📊 Tableau de Bord":
         st.divider()
 
     # --- INTERFACE (Tabs) ---
-    tab1, tab2, tab3, tab4 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes", "📚 Explorer Notion"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes", "📚 Explorer Notion", "🧹 Nettoyeur CSV"])
     params = {}
     run_search = False
     import_list = [] # Will hold IDs or Obs to import
@@ -2285,3 +2285,81 @@ elif nav_mode == "📊 Tableau de Bord":
                 
                 if success_log and not error_log:
                     st.balloons()
+
+    with tab5:
+        st.header("🧹 Nettoyeur CSV pour Notion")
+        st.markdown(
+            "Cet outil permet de nettoyer les exports CSV provenant de Notion (ex: suppression des URLs dans les titres "
+            "liés, formatage rigoureux) avant de les réimporter ailleurs ou de les utiliser dans d'autres outils."
+        )
+
+        uploaded_file = st.file_uploader("📥 Charger un fichier CSV (Export Notion)", type=["csv"])
+
+        if uploaded_file is not None:
+            with st.spinner("Analyse du fichier..."):
+                df = csv_cleaner.parse_csv(uploaded_file)
+            
+            if df is not None:
+                st.success(f"Fichier chargé avec succès ! ({len(df)} lignes)")
+                
+                # Analyze artifacts
+                analysis = csv_cleaner.analyze_dataframe(df)
+                
+                # Detect GPS
+                lat_col, lng_col = csv_cleaner.detect_coordinate_columns(df)
+                
+                # Layout
+                col_art, col_gps = st.columns(2)
+                
+                with col_art:
+                    st.subheader("🕵️ Artefacts détectés")
+                    if analysis["totalArtifacts"] > 0:
+                        st.warning(f"{analysis['totalArtifacts']} artefacts (liens Notion cachés) trouvés.")
+                        # Show which columns
+                        cols_with_artifacts = [c for c in analysis["columns"] if c["artifactCount"] > 0]
+                        for c in cols_with_artifacts:
+                            with st.expander(f"Colonne : {c['columnName']} ({c['artifactCount']} artefacts)"):
+                                st.write("**Exemples de nettoyage :**")
+                                for i in range(len(c["samplesBefore"])):
+                                    st.text(f"❌ {c['samplesBefore'][i]}\n✅ {c['samplesAfter'][i]}")
+                    else:
+                        st.info("Aucun artefact Notion détecté dans les cellules.")
+                
+                with col_gps:
+                    st.subheader("🌍 Coordonnées GPS")
+                    if lat_col and lng_col:
+                        st.success(f"Colonnes détectées automatiquement :\n- Latitude: `{lat_col}`\n- Longitude: `{lng_col}`")
+                    else:
+                        st.info("Impossible de détecter automatiquement les colonnes Latitude/Longitude. Vérifiez que les valeurs sont valides.")
+                
+                st.divider()
+                st.subheader("⚙️ Options de nettoyage")
+                
+                # Columns to clean
+                cols_to_clean_options = [c["columnName"] for c in analysis["columns"] if c["artifactCount"] > 0]
+                selected_cols_to_clean = st.multiselect(
+                    "Colonnes à nettoyer (suppression des liens Notion additionnels)", 
+                    options=cols_to_clean_options,
+                    default=cols_to_clean_options
+                )
+                
+                if st.button("✨ Nettoyer et Mettre à disposition l'export", type="primary"):
+                    with st.spinner("Nettoyage en cours..."):
+                        cleaned_df = csv_cleaner.clean_dataframe(df, selected_cols_to_clean)
+                        
+                        # Show preview
+                        st.subheader("🔍 Aperçu des données nettoyées")
+                        st.dataframe(cleaned_df.head(10))
+                        
+                        # Generate CSV
+                        csv_data = cleaned_df.to_csv(index=False, sep=";").encode('utf-8-sig')
+                        
+                        st.download_button(
+                            label="📥 Télécharger le CSV nettoyé",
+                            data=csv_data,
+                            file_name="notion_cleaned_export.csv",
+                            mime="text/csv",
+                            type="secondary"
+                        )
+            else:
+                st.error("Erreur lors de la lecture du fichier CSV. Assurez-vous qu'il s'agit bien d'un export au format standard.")
