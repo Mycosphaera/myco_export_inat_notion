@@ -2333,33 +2333,54 @@ elif nav_mode == "📊 Tableau de Bord":
                         st.info("Impossible de détecter automatiquement les colonnes Latitude/Longitude. Vérifiez que les valeurs sont valides.")
                 
                 st.divider()
-                st.subheader("⚙️ Options de nettoyage")
+                st.subheader("⚙️ Options de nettoyage et d'export")
                 
                 # Columns to clean
                 cols_to_clean_options = [c["columnName"] for c in analysis["columns"] if c["artifactCount"] > 0]
                 selected_cols_to_clean = st.multiselect(
-                    "Colonnes à nettoyer (suppression des liens Notion additionnels)", 
+                    "1. Colonnes à nettoyer (suppressions de liens Notion)", 
                     options=cols_to_clean_options,
                     default=cols_to_clean_options
                 )
                 
-                if st.button("✨ Nettoyer et Mettre à disposition l'export", type="primary"):
-                    with st.spinner("Nettoyage en cours..."):
-                        cleaned_df = csv_cleaner.clean_dataframe(df, selected_cols_to_clean)
-                        
-                        # Show preview
-                        st.subheader("🔍 Aperçu des données nettoyées")
-                        st.dataframe(cleaned_df.head(10))
-                        
-                        # Generate CSV
-                        csv_data = cleaned_df.to_csv(index=False, sep=";").encode('utf-8-sig')
-                        
-                        st.download_button(
-                            label="📥 Télécharger le CSV nettoyé",
-                            data=csv_data,
-                            file_name="notion_cleaned_export.csv",
-                            mime="text/csv",
-                            type="secondary"
-                        )
+                # Reorder and select columns
+                all_columns = df.columns.tolist()
+                ordered_cols = st.multiselect(
+                    "2. Réorganiser et/ou exclure des colonnes",
+                    options=all_columns,
+                    default=all_columns,
+                    help="Modifiez l'ordre ou retirez les colonnes dont vous n'avez pas besoin."
+                )
+                
+                # Rename the file
+                file_name_input = st.text_input("3. Nom du fichier d'export", value="notion_cleaned_export.csv")
+                if not file_name_input.endswith(".csv"):
+                    file_name_input += ".csv"
+                
+                st.divider()
+                st.subheader("🔍 Aperçu du résultat prêt à l'export")
+                
+                # Compute clean dataframe immediately
+                cleaned_df = csv_cleaner.clean_dataframe(df, selected_cols_to_clean)
+                
+                # Apply column reordering/filtering based on the multiselect
+                if ordered_cols:
+                    # Defensive check: ensure the column actually exists
+                    valid_cols = [c for c in ordered_cols if c in cleaned_df.columns]
+                    cleaned_df = cleaned_df[valid_cols]
+                
+                st.dataframe(cleaned_df.head(10))
+                
+                # Generate CSV data
+                csv_data = cleaned_df.to_csv(index=False, sep=";").encode('utf-8-sig')
+                
+                # The download button is rendered directly (outside of any st.button)
+                st.download_button(
+                    label="📥 Télécharger le CSV",
+                    data=csv_data,
+                    file_name=file_name_input,
+                    mime="text/csv",
+                    type="primary"
+                )
             else:
                 st.error("Erreur lors de la lecture du fichier CSV. Assurez-vous qu'il s'agit bien d'un export au format standard.")
