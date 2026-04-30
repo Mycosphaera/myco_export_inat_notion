@@ -1826,6 +1826,7 @@ elif nav_mode == "📊 Tableau de Bord":
                         "Collection": False,
                         "No° Fongarium": "",
                         "Lien": obs_url,
+                        "_is_new": is_new  # Technical column for robust filtering
                     })
                 
                 st.session_state.main_import_df = pd.DataFrame(u_data)
@@ -1885,7 +1886,7 @@ elif nav_mode == "📊 Tableau de Bord":
             df_filtered = df_filtered[df_filtered['Date'].isin(selected_dates)]
         
         if hide_imported:
-            df_filtered = df_filtered[df_filtered['Déjà importé'].str.contains("Non")]
+            df_filtered = df_filtered[df_filtered['_is_new'] == True]
         
         # Slice for Display (Limit)
         if selected_limit != "Tout":
@@ -2016,7 +2017,7 @@ elif nav_mode == "📊 Tableau de Bord":
         if selected_dates:
              df_filtered_fresh = df_filtered_fresh[df_filtered_fresh['Date'].isin(selected_dates)]
         if hide_imported:
-             df_filtered_fresh = df_filtered_fresh[df_filtered_fresh['Déjà importé'].str.contains("Non")]
+             df_filtered_fresh = df_filtered_fresh[df_filtered_fresh['_is_new'] == True]
         if selected_limit != "Tout":
              df_display_fresh = df_filtered_fresh.head(int(selected_limit))
         else:
@@ -2033,7 +2034,8 @@ elif nav_mode == "📊 Tableau de Bord":
             hide_index=True,
             column_config={
                 "Import?": st.column_config.CheckboxColumn("Importer?", width="small", default=True),
-                "Déjà importé": st.column_config.TextColumn("Status", disabled=True, width="small"),
+                "Déjà importé": st.column_config.TextColumn("Statut", disabled=True, width="small"),
+                "_is_new": None, # Hide technical column
                 "ID": st.column_config.TextColumn("ID", disabled=True, width="small"),
                 "Taxon": st.column_config.TextColumn("Taxon", disabled=True),
                 "Date": st.column_config.TextColumn("Date", disabled=True, width="small"),
@@ -2130,8 +2132,7 @@ elif nav_mode == "📊 Tableau de Bord":
                     obs_id = str(row["ID"])
                     
                     # --- DOUBLE SECURITY ---
-                    status_val = str(row.get("Déjà importé", ""))
-                    if "Oui" in status_val:
+                    if not row.get("_is_new", True):
                         return None, "⚠️ Importation ignorée (déjà présent sur Notion)"
                     
                     try:
