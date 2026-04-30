@@ -128,10 +128,12 @@ def get_existing_notion_ids(ids, token, db_id, props_schema=None):
                     if has_more:
                         payload["start_cursor"] = data.get("next_cursor")
                 else:
-                    print(f"Notion Query Error {resp.status_code}: {resp.text}")
-                    has_more = False
+                    error_msg = f"Notion Query Error {resp.status_code}: {resp.text}"
+                    print(error_msg)
+                    raise RuntimeError(error_msg)
         except requests.RequestException as e:
             print(f"Network/HTTP error checking existing Notion URLs: {e}")
+            raise RuntimeError(f"Erreur réseau lors de la vérification des doublons Notion : {e}") from e
             
     return existing_ids
 
@@ -1767,7 +1769,11 @@ elif nav_mode == "📊 Tableau de Bord":
                 
                 ids_to_check = [str(r['id']) for r in unique_results]
                 current_schema = st.session_state.get('props_schema', {})
-                existing_ids = get_existing_notion_ids(ids_to_check, NOTION_TOKEN, DATABASE_ID, props_schema=current_schema)
+                try:
+                    existing_ids = get_existing_notion_ids(ids_to_check, NOTION_TOKEN, DATABASE_ID, props_schema=current_schema)
+                except Exception as e:
+                    st.error(f"⚠️ Impossible de vérifier les doublons sur Notion. L'importation est bloquée par sécurité. Détails: {e}")
+                    st.stop()
                 
                 u_data = []
                 for r in unique_results:
