@@ -1814,6 +1814,7 @@ elif nav_mode == "📊 Tableau de Bord":
     
                     u_data.append({
                         "Import?": is_new,
+                        "Déjà importé": "🔴 Oui" if not is_new else "🟢 Non",
                         "ID": str(r['id']), 
                         "Taxon": r.get('taxon', {}).get('name') or "Inconnu",
                         "Date": date_str,
@@ -1825,7 +1826,6 @@ elif nav_mode == "📊 Tableau de Bord":
                         "Collection": False,
                         "No° Fongarium": "",
                         "Lien": obs_url,
-                        "Déjà importé": "Oui" if not is_new else "Non"
                     })
                 
                 st.session_state.main_import_df = pd.DataFrame(u_data)
@@ -1862,7 +1862,7 @@ elif nav_mode == "📊 Tableau de Bord":
             st.subheader(f"📋 Aperçu d'importation (Inaturalist) ({total_avail} obs trouvées)")
         
         # Filter Widgets
-        col_date, col_limit = st.columns([3, 1])
+        col_date, col_hide, col_limit = st.columns([3, 1, 1])
         
         # Date Filter (Pills)
         selected_dates = col_date.pills(
@@ -1872,6 +1872,9 @@ elif nav_mode == "📊 Tableau de Bord":
             default=[]
         )
         
+        # Hide Imported
+        hide_imported = col_hide.checkbox("Cacher importés", value=False)
+        
         # Limit Filter
         # Default to "Tout" (Index 3) to show all fetched results immediately
         selected_limit = col_limit.selectbox("Afficher", options=limit_options, index=3)
@@ -1880,6 +1883,9 @@ elif nav_mode == "📊 Tableau de Bord":
         df_filtered = df_main.copy()
         if selected_dates:
             df_filtered = df_filtered[df_filtered['Date'].isin(selected_dates)]
+        
+        if hide_imported:
+            df_filtered = df_filtered[df_filtered['Déjà importé'].str.contains("Non")]
         
         # Slice for Display (Limit)
         if selected_limit != "Tout":
@@ -2009,6 +2015,8 @@ elif nav_mode == "📊 Tableau de Bord":
         df_filtered_fresh = st.session_state.main_import_df.copy()
         if selected_dates:
              df_filtered_fresh = df_filtered_fresh[df_filtered_fresh['Date'].isin(selected_dates)]
+        if hide_imported:
+             df_filtered_fresh = df_filtered_fresh[df_filtered_fresh['Déjà importé'].str.contains("Non")]
         if selected_limit != "Tout":
              df_display_fresh = df_filtered_fresh.head(int(selected_limit))
         else:
@@ -2025,6 +2033,7 @@ elif nav_mode == "📊 Tableau de Bord":
             hide_index=True,
             column_config={
                 "Import?": st.column_config.CheckboxColumn("Importer?", width="small", default=True),
+                "Déjà importé": st.column_config.TextColumn("Status", disabled=True, width="small"),
                 "ID": st.column_config.TextColumn("ID", disabled=True, width="small"),
                 "Taxon": st.column_config.TextColumn("Taxon", disabled=True),
                 "Date": st.column_config.TextColumn("Date", disabled=True, width="small"),
@@ -2035,8 +2044,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 "Description": st.column_config.TextColumn("Description", disabled=True, width="large"),
                 "Collection": st.column_config.CheckboxColumn("Collection?", default=False, width="small"),
                 "No° Fongarium": st.column_config.TextColumn("No° Fongarium", width="medium"),
-                "Lien": st.column_config.LinkColumn("Lien", display_text="Ouvrir", width="small"),
-                "Déjà importé": st.column_config.TextColumn("Déjà importé", disabled=True, width="small")
+                "Lien": st.column_config.LinkColumn("Lien", display_text="Ouvrir", width="small")
             },
             disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "GPS", "Description", "Lien", "Déjà importé"]
         )
