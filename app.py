@@ -2130,7 +2130,8 @@ elif nav_mode == "📊 Tableau de Bord":
                     obs_id = str(row["ID"])
                     
                     # --- DOUBLE SECURITY ---
-                    if row.get("Déjà importé") == "Oui":
+                    status_val = str(row.get("Déjà importé", ""))
+                    if "Oui" in status_val:
                         return None, "⚠️ Importation ignorée (déjà présent sur Notion)"
                     
                     try:
