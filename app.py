@@ -78,6 +78,66 @@ def fetch_notion_schema(token, db_id):
         print(f"Notion Schema Exception: {e}")
         return {}
 
+def get_existing_notion_urls(urls, token, db_id, props_schema=None):
+    """
+    Vérifie quels URLs iNaturalist parmi la liste fournie existent déjà dans Notion.
+    """
+    if not urls or not token or not db_id:
+        return set()
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    api_url = f"https://api.notion.com/v1/databases/{db_id}/query"
+    existing_urls = set()
+    
+    url_property_name = "URL Inaturalist"
+    if props_schema:
+        url_property_name = next((k for k, v in props_schema.items() if "url" in k.lower() and "inaturalist" in k.lower()), "URL Inaturalist")
+    
+    # Notion limits 'or' filters to 100 conditions.
+    for i in range(0, len(urls), 100):
+        chunk = urls[i:i+100]
+        payload = {
+            "filter": {
+                "or": [
+                    {
+                        "property": url_property_name,
+                        "url": {
+                            "equals": url
+                        }
+                    } for url in chunk
+                ]
+            }
+        }
+        try:
+            has_more = True
+            while has_more:
+                resp = requests.post(api_url, headers=headers, json=payload, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    results = data.get("results", [])
+                    for r in results:
+                        props = r.get("properties", {})
+                        url_key = next((k for k, v in props.items() if "url" in k.lower() and "inaturalist" in k.lower()), "URL Inaturalist")
+                        url_prop = props.get(url_key, {})
+                        if url_prop.get("type") == "url" and url_prop.get("url"):
+                            existing_urls.add(url_prop["url"])
+                    
+                    has_more = data.get("has_more", False)
+                    if has_more:
+                        payload["start_cursor"] = data.get("next_cursor")
+                else:
+                    print(f"Notion Query Error {resp.status_code}: {resp.text}")
+                    has_more = False
+        except requests.RequestException as e:
+            print(f"Network/HTTP error checking existing Notion URLs: {e}")
+            
+    return existing_urls
+
+
 def get_notion_mycologists():
     """
     Récupère la liste des options de la propriété 'Mycologue' dans la base Notion.
@@ -1707,6 +1767,10 @@ elif nav_mode == "📊 Tableau de Bord":
                 # Create the master DF for the new unified editor
                 # Columns: [Import?] [ID] [Taxon] [Date] [Lieu] [Mycologue] [Collection?] [No° Fongarium] [Link]
                 
+                urls_to_check = [r.get('uri') or f"https://www.inaturalist.org/observations/{r['id']}" for r in unique_results]
+                current_schema = st.session_state.get('props_schema', {})
+                existing_urls = get_existing_notion_urls(urls_to_check, NOTION_TOKEN, DATABASE_ID, props_schema=current_schema)
+                
                 u_data = []
                 for r in unique_results:
                     # Helper for Date extraction
@@ -1742,9 +1806,12 @@ elif nav_mode == "📊 Tableau de Bord":
                     
                     # Helper for Description
                     desc = r.get('description', '') or ""
+                    
+                    obs_url = r.get('uri') or f"https://www.inaturalist.org/observations/{r['id']}"
+                    is_new = obs_url not in existing_urls
     
                     u_data.append({
-                        "Import?": True,
+                        "Import?": is_new,
                         "ID": str(r['id']), 
                         "Taxon": r.get('taxon', {}).get('name') or "Inconnu",
                         "Date": date_str,
@@ -1755,7 +1822,8 @@ elif nav_mode == "📊 Tableau de Bord":
                         "Description": desc,
                         "Collection": False,
                         "No° Fongarium": "",
-                        "Lien": r.get('uri') or f"https://www.inaturalist.org/observations/{r['id']}"
+                        "Lien": obs_url,
+                        "Déjà importé": "Oui" if not is_new else "Non"
                     })
                 
                 st.session_state.main_import_df = pd.DataFrame(u_data)
@@ -1965,9 +2033,10 @@ elif nav_mode == "📊 Tableau de Bord":
                 "Description": st.column_config.TextColumn("Description", disabled=True, width="large"),
                 "Collection": st.column_config.CheckboxColumn("Collection?", default=False, width="small"),
                 "No° Fongarium": st.column_config.TextColumn("No° Fongarium", width="medium"),
-                "Lien": st.column_config.LinkColumn("Lien", display_text="Ouvrir", width="small")
+                "Lien": st.column_config.LinkColumn("Lien", display_text="Ouvrir", width="small"),
+                "Déjà importé": st.column_config.TextColumn("Déjà importé", disabled=True, width="small")
             },
-            disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "GPS", "Description", "Lien"]
+            disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "GPS", "Description", "Lien", "Déjà importé"]
         )
         
         # CRITICAL: SYNC EDITS BACK TO MASTER
@@ -2050,6 +2119,10 @@ elif nav_mode == "📊 Tableau de Bord":
                     sci_name = row["Taxon"]
                     obs_id = str(row["ID"])
                     
+                    # --- DOUBLE SECURITY ---
+                    if row.get("Déjà importé") == "Oui":
+                        return None, "⚠️ Importation ignorée (déjà présent sur Notion)"
+                    
                     try:
                         # --- DATA EXTRACTION & MAPPING ---
                         inat_login = obs_obj.get('user', {}).get('login') or "Inconnu"
@@ -2112,6 +2185,20 @@ elif nav_mode == "📊 Tableau de Bord":
                             props[fong_col_name] = {"rich_text": [{"text": {"content": str(fong_code)}}]}
                         elif tag_string:
                             props[fong_col_name] = {"rich_text": [{"text": {"content": tag_string}}]}
+                            
+                        # Set Fongarium checkbox if Collection is selected
+                        if row.get("Collection"):
+                            fong_checkbox_key = next((k for k, v in db_props_schema.items() if "fongarium" in k.lower() and v["type"] == "checkbox"), None)
+                            
+                            # Fallback if the user named it exactly 'Fongarium'
+                            if not fong_checkbox_key and "Fongarium" in db_props_schema:
+                                fong_checkbox_key = "Fongarium"
+                            
+                            if fong_checkbox_key:
+                                if db_props_schema.get(fong_checkbox_key, {}).get("type") == "checkbox":
+                                    props[fong_checkbox_key] = {"checkbox": True}
+                                else:
+                                    print(f"Warning: Property '{fong_checkbox_key}' found but is not a checkbox type.")
                         
                         description = obs_obj.get('description', '')
                         if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
