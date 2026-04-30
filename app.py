@@ -92,50 +92,48 @@ def get_existing_notion_ids(ids, token, db_id, props_schema=None):
     if props_schema:
         url_property_name = next((k for k, v in props_schema.items() if "url" in k.lower() and "inaturalist" in k.lower()), "URL Inaturalist")
     
-    # Notion limits 'or' filters to 100 conditions.
-    for i in range(0, len(ids), 100):
-        chunk = ids[i:i+100]
-        payload = {
-            "filter": {
-                "or": [
-                    {
-                        "property": url_property_name,
-                        "url": {
-                            "contains": str(obs_id)
-                        }
-                    } for obs_id in chunk
-                ]
+    # Fetch all records with a non-empty iNaturalist URL.
+    # This is significantly faster and more reliable than passing hundreds of 'OR' conditions,
+    # which causes Notion's database engine to time out.
+    payload = {
+        "filter": {
+            "property": url_property_name,
+            "url": {
+                "is_not_empty": True
             }
         }
-        try:
-            has_more = True
-            while has_more:
-                resp = requests.post(api_url, headers=headers, json=payload, timeout=15)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    results = data.get("results", [])
-                    for r in results:
-                        props = r.get("properties", {})
-                        url_prop = props.get(url_property_name, {})
-                        if url_prop.get("type") == "url" and url_prop.get("url"):
-                            url_val = url_prop["url"]
-                            import re
-                            match = re.search(r'/(\d+)', url_val)
-                            if match:
-                                existing_ids.add(match.group(1))
-                    
-                    has_more = data.get("has_more", False)
-                    if has_more:
-                        payload["start_cursor"] = data.get("next_cursor")
-                else:
-                    error_msg = f"Notion Query Error {resp.status_code}: {resp.text}"
-                    print(error_msg)
-                    raise RuntimeError(error_msg)
-        except requests.RequestException as e:
-            print(f"Network/HTTP error checking existing Notion URLs: {e}")
-            raise RuntimeError(f"Erreur réseau lors de la vérification des doublons Notion : {e}") from e
-            
-    return existing_ids
+    }
+    
+    try:
+        has_more = True
+        while has_more:
+            resp = requests.post(api_url, headers=headers, json=payload, timeout=15)
+            if resp.status_code == 200:
+                data = resp.json()
+                results = data.get("results", [])
+                for r in results:
+                    props = r.get("properties", {})
+                    url_prop = props.get(url_property_name, {})
+                    if url_prop.get("type") == "url" and url_prop.get("url"):
+                        url_val = url_prop["url"]
+                        import re
+                        match = re.search(r'/(\d+)', url_val)
+                        if match:
+                            existing_ids.add(match.group(1))
+                
+                has_more = data.get("has_more", False)
+                if has_more:
+                    payload["start_cursor"] = data.get("next_cursor")
+            else:
+                error_msg = f"Notion Query Error {resp.status_code}: {resp.text}"
+                print(error_msg)
+                raise RuntimeError(error_msg)
+    except requests.RequestException as e:
+        print(f"Network/HTTP error checking existing Notion URLs: {e}")
+        raise RuntimeError(f"Erreur réseau lors de la vérification des doublons Notion : {e}") from e
+        
+    # Return only the IDs that were actually in our requested list
+    return existing_ids.intersection(set(ids))
 
 
 def get_notion_mycologists():
