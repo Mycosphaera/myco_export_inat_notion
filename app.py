@@ -2121,7 +2121,9 @@ elif nav_mode == "📊 Tableau de Bord":
                     
                     # --- DOUBLE SECURITY ---
                     if row.get("Déjà importé") == "Oui":
-                        return None, "⚠️ Importation ignorée (déjà présent sur Notion)"                    try:
+                        return None, "⚠️ Importation ignorée (déjà présent sur Notion)"
+                    
+                    try:
                         # --- DATA EXTRACTION & MAPPING ---
                         inat_login = obs_obj.get('user', {}).get('login') or "Inconnu"
                         user_name = inat_login
