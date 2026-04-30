@@ -18,19 +18,14 @@ import csv_cleaner
 
 # --- SECRETS MANAGEMENT ---
 try:
-    NOTION_TOKEN = st.secrets["notion"]["token"] if "notion" in st.secrets else st.secrets["NOTION_TOKEN"]
-    DATABASE_ID = st.secrets["notion"]["database_id"] if "notion" in st.secrets else st.secrets["DATABASE_ID"]
-    has_secrets = True
+    notional = st.secrets.get("notion", {})
+    NOTION_TOKEN = notional.get("token") or st.secrets.get("NOTION_TOKEN")
+    DATABASE_ID = notional.get("database_id") or st.secrets.get("DATABASE_ID")
+    has_secrets = bool(NOTION_TOKEN and DATABASE_ID)
 except Exception:
-    try:
-         # Fallback old flat structure
-         NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
-         DATABASE_ID = st.secrets["DATABASE_ID"]
-         has_secrets = True
-    except:
-         has_secrets = False
-         NOTION_TOKEN = None
-         DATABASE_ID = None
+    has_secrets = False
+    NOTION_TOKEN = None
+    DATABASE_ID = None
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Portail Myco", layout="wide")
@@ -78,11 +73,11 @@ def fetch_notion_schema(token, db_id):
         print(f"Notion Schema Exception: {e}")
         return {}
 
-def get_existing_notion_urls(urls, token, db_id, props_schema=None):
+def get_existing_notion_ids(ids, token, db_id, props_schema=None):
     """
-    Vérifie quels URLs iNaturalist parmi la liste fournie existent déjà dans Notion.
+    Vérifie quels IDs iNaturalist parmi la liste fournie existent déjà dans Notion, en utilisant l'URL.
     """
-    if not urls or not token or not db_id:
+    if not ids or not token or not db_id:
         return set()
     
     headers = {
@@ -91,24 +86,24 @@ def get_existing_notion_urls(urls, token, db_id, props_schema=None):
         "Content-Type": "application/json"
     }
     api_url = f"https://api.notion.com/v1/databases/{db_id}/query"
-    existing_urls = set()
+    existing_ids = set()
     
     url_property_name = "URL Inaturalist"
     if props_schema:
         url_property_name = next((k for k, v in props_schema.items() if "url" in k.lower() and "inaturalist" in k.lower()), "URL Inaturalist")
     
     # Notion limits 'or' filters to 100 conditions.
-    for i in range(0, len(urls), 100):
-        chunk = urls[i:i+100]
+    for i in range(0, len(ids), 100):
+        chunk = ids[i:i+100]
         payload = {
             "filter": {
                 "or": [
                     {
                         "property": url_property_name,
                         "url": {
-                            "equals": url
+                            "contains": str(obs_id)
                         }
-                    } for url in chunk
+                    } for obs_id in chunk
                 ]
             }
         }
@@ -121,21 +116,26 @@ def get_existing_notion_urls(urls, token, db_id, props_schema=None):
                     results = data.get("results", [])
                     for r in results:
                         props = r.get("properties", {})
-                        url_key = next((k for k, v in props.items() if "url" in k.lower() and "inaturalist" in k.lower()), "URL Inaturalist")
-                        url_prop = props.get(url_key, {})
+                        url_prop = props.get(url_property_name, {})
                         if url_prop.get("type") == "url" and url_prop.get("url"):
-                            existing_urls.add(url_prop["url"])
+                            url_val = url_prop["url"]
+                            import re
+                            match = re.search(r'/(\d+)', url_val)
+                            if match:
+                                existing_ids.add(match.group(1))
                     
                     has_more = data.get("has_more", False)
                     if has_more:
                         payload["start_cursor"] = data.get("next_cursor")
                 else:
-                    print(f"Notion Query Error {resp.status_code}: {resp.text}")
-                    has_more = False
+                    error_msg = f"Notion Query Error {resp.status_code}: {resp.text}"
+                    print(error_msg)
+                    raise RuntimeError(error_msg)
         except requests.RequestException as e:
             print(f"Network/HTTP error checking existing Notion URLs: {e}")
+            raise RuntimeError(f"Erreur réseau lors de la vérification des doublons Notion : {e}") from e
             
-    return existing_urls
+    return existing_ids
 
 
 def get_notion_mycologists():
@@ -600,7 +600,6 @@ if 'editor_key_version' not in st.session_state:
 
 # --- SECRETS MANAGEMENT ---
 # (Moved to top of script)
-has_secrets = True if NOTION_TOKEN else False
 
 # --- SUPABASE CLIENT ---
 # Géré via database.py maintenant
@@ -1767,9 +1766,13 @@ elif nav_mode == "📊 Tableau de Bord":
                 # Create the master DF for the new unified editor
                 # Columns: [Import?] [ID] [Taxon] [Date] [Lieu] [Mycologue] [Collection?] [No° Fongarium] [Link]
                 
-                urls_to_check = [r.get('uri') or f"https://www.inaturalist.org/observations/{r['id']}" for r in unique_results]
+                ids_to_check = [str(r['id']) for r in unique_results]
                 current_schema = st.session_state.get('props_schema', {})
-                existing_urls = get_existing_notion_urls(urls_to_check, NOTION_TOKEN, DATABASE_ID, props_schema=current_schema)
+                try:
+                    existing_ids = get_existing_notion_ids(ids_to_check, NOTION_TOKEN, DATABASE_ID, props_schema=current_schema)
+                except Exception as e:
+                    st.error(f"⚠️ Impossible de vérifier les doublons sur Notion. L'importation est bloquée par sécurité. Détails: {e}")
+                    st.stop()
                 
                 u_data = []
                 for r in unique_results:
@@ -1808,7 +1811,8 @@ elif nav_mode == "📊 Tableau de Bord":
                     desc = r.get('description', '') or ""
                     
                     obs_url = r.get('uri') or f"https://www.inaturalist.org/observations/{r['id']}"
-                    is_new = obs_url not in existing_urls
+                    obs_id_str = str(r['id'])
+                    is_new = obs_id_str not in existing_ids
     
                     u_data.append({
                         "Import?": is_new,
