@@ -78,7 +78,7 @@ def fetch_notion_schema(token, db_id):
         print(f"Notion Schema Exception: {e}")
         return {}
 
-def get_existing_notion_urls(urls, token, db_id):
+def get_existing_notion_urls(urls, token, db_id, props_schema=None):
     """
     Vérifie quels URLs iNaturalist parmi la liste fournie existent déjà dans Notion.
     """
@@ -93,6 +93,10 @@ def get_existing_notion_urls(urls, token, db_id):
     api_url = f"https://api.notion.com/v1/databases/{db_id}/query"
     existing_urls = set()
     
+    url_property_name = "URL Inaturalist"
+    if props_schema:
+        url_property_name = next((k for k, v in props_schema.items() if "url" in k.lower() and "inaturalist" in k.lower()), "URL Inaturalist")
+    
     # Notion limits 'or' filters to 100 conditions.
     for i in range(0, len(urls), 100):
         chunk = urls[i:i+100]
@@ -100,7 +104,7 @@ def get_existing_notion_urls(urls, token, db_id):
             "filter": {
                 "or": [
                     {
-                        "property": "URL Inaturalist",
+                        "property": url_property_name,
                         "url": {
                             "equals": url
                         }
@@ -1764,7 +1768,8 @@ elif nav_mode == "📊 Tableau de Bord":
                 # Columns: [Import?] [ID] [Taxon] [Date] [Lieu] [Mycologue] [Collection?] [No° Fongarium] [Link]
                 
                 urls_to_check = [r.get('uri') or f"https://www.inaturalist.org/observations/{r['id']}" for r in unique_results]
-                existing_urls = get_existing_notion_urls(urls_to_check, NOTION_TOKEN, DATABASE_ID)
+                current_schema = st.session_state.get('props_schema', {})
+                existing_urls = get_existing_notion_urls(urls_to_check, NOTION_TOKEN, DATABASE_ID, props_schema=current_schema)
                 
                 u_data = []
                 for r in unique_results:
