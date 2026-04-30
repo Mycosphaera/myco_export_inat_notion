@@ -18,19 +18,14 @@ import csv_cleaner
 
 # --- SECRETS MANAGEMENT ---
 try:
-    NOTION_TOKEN = st.secrets["notion"]["token"] if "notion" in st.secrets else st.secrets["NOTION_TOKEN"]
-    DATABASE_ID = st.secrets["notion"]["database_id"] if "notion" in st.secrets else st.secrets["DATABASE_ID"]
-    has_secrets = True
+    notional = st.secrets.get("notion", {})
+    NOTION_TOKEN = notional.get("token") or st.secrets.get("NOTION_TOKEN")
+    DATABASE_ID = notional.get("database_id") or st.secrets.get("DATABASE_ID")
+    has_secrets = bool(NOTION_TOKEN and DATABASE_ID)
 except Exception:
-    try:
-         # Fallback old flat structure
-         NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
-         DATABASE_ID = st.secrets["DATABASE_ID"]
-         has_secrets = True
-    except:
-         has_secrets = False
-         NOTION_TOKEN = None
-         DATABASE_ID = None
+    has_secrets = False
+    NOTION_TOKEN = None
+    DATABASE_ID = None
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Portail Myco", layout="wide")
