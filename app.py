@@ -2189,12 +2189,16 @@ elif nav_mode == "📊 Tableau de Bord":
                         # Set Fongarium checkbox if Collection is selected
                         if row.get("Collection"):
                             fong_checkbox_key = next((k for k, v in db_props_schema.items() if "fongarium" in k.lower() and v["type"] == "checkbox"), None)
-                            # Fallback if the user named it exactly 'Fongarium' but it's not in schema somehow, though it should be
+                            
+                            # Fallback if the user named it exactly 'Fongarium'
                             if not fong_checkbox_key and "Fongarium" in db_props_schema:
                                 fong_checkbox_key = "Fongarium"
                             
                             if fong_checkbox_key:
-                                props[fong_checkbox_key] = {"checkbox": True}
+                                if db_props_schema.get(fong_checkbox_key, {}).get("type") == "checkbox":
+                                    props[fong_checkbox_key] = {"checkbox": True}
+                                else:
+                                    print(f"Warning: Property '{fong_checkbox_key}' found but is not a checkbox type.")
                         
                         description = obs_obj.get('description', '')
                         if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
