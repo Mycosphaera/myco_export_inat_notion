@@ -600,7 +600,6 @@ if 'editor_key_version' not in st.session_state:
 
 # --- SECRETS MANAGEMENT ---
 # (Moved to top of script)
-has_secrets = True if NOTION_TOKEN else False
 
 # --- SUPABASE CLIENT ---
 # Géré via database.py maintenant
