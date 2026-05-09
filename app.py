@@ -76,6 +76,98 @@ def fetch_notion_schema(token, db_id):
         print(f"Notion Schema Exception: {e}")
         return {}
 
+@st.cache_data(ttl=300, show_spinner="Vérification des doublons sur Notion...")
+def _cached_check_notion_duplicates(ids_tuple, token, db_id, url_property_name):
+    """
+    Vérifie quels IDs iNaturalist parmi la liste fournie existent déjà dans Notion, en utilisant l'URL.
+    Fait des requêtes par paquets de 100 en parallèle pour optimiser la performance.
+    """
+    import requests
+    import re
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    existing_ids = set()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    api_url = f"https://api.notion.com/v1/databases/{db_id}/query"
+    
+    def query_chunk(chunk):
+        chunk_existing = set()
+        payload = {
+            "filter": {
+                "or": [
+                    {
+                        "property": url_property_name,
+                        "url": {
+                            "contains": str(obs_id)
+                        }
+                    } for obs_id in chunk
+                ]
+            }
+        }
+        
+        try:
+            with requests.Session() as session:
+                session.headers.update(headers)
+                has_more = True
+                while has_more:
+                    last_resp = None
+                    for attempt in range(5):
+                        try:
+                            resp = session.post(api_url, json=payload, timeout=20)
+                            last_resp = resp
+                            if resp.status_code == 200:
+                                break
+                            if resp.status_code == 429 or 500 <= resp.status_code < 600:
+                                retry_after = resp.headers.get("Retry-After")
+                                wait = float(retry_after) if retry_after else (2 ** attempt + random.random())
+                                time.sleep(wait)
+                                continue
+                            break
+                        except requests.RequestException:
+                            if attempt < 4:
+                                time.sleep(2 ** attempt + random.random())
+                                continue
+                            break
+
+                    if last_resp and last_resp.status_code == 200:
+                        data = last_resp.json()
+                        for r in data.get("results", []):
+                            url_val = r.get("properties", {}).get(url_property_name, {}).get("url")
+                            if url_val:
+                                match = re.search(r'/(\d+)', url_val)
+                                if match:
+                                    chunk_existing.add(match.group(1))
+                        
+                        has_more = data.get("has_more", False)
+                        if has_more:
+                            payload["start_cursor"] = data.get("next_cursor")
+                    else:
+                        has_more = False
+        except Exception as e:
+            print(f"Error in query_chunk: {e}")
+        return chunk_existing
+
+    # Notion limits 'or' filters to 100 conditions.
+    chunks = [ids_tuple[i:i+100] for i in range(0, len(ids_tuple), 100)]
+    
+    with ThreadPoolExecutor(max_workers=min(len(chunks), 8)) as executor:
+        futures = [executor.submit(query_chunk, c) for c in chunks]
+        for fut in as_completed(futures):
+            existing_ids.update(fut.result())
+            
+    return existing_ids
+
+
+@st.cache_data(ttl=3600, show_spinner="Chargement des référentiels taxonomiques...")
+def cached_build_lookup_maps(token):
+    """Charge et met en cache les référentiels Mycoliste, Stations, etc."""
+    return enricher.build_lookup_maps(token)
+
+
 def get_existing_notion_ids(ids, token, db_id, props_schema=None):
     """
     Vérifie quels IDs iNaturalist parmi la liste fournie existent déjà dans Notion, en utilisant l'URL.
@@ -83,82 +175,19 @@ def get_existing_notion_ids(ids, token, db_id, props_schema=None):
     if not ids or not token or not db_id:
         return set()
     
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Notion-Version": "2022-06-28",
-        "Content-Type": "application/json"
-    }
-    api_url = f"https://api.notion.com/v1/databases/{db_id}/query"
-    existing_ids = set()
-    
     url_property_name = "URL Inaturalist"
     if props_schema:
         url_property_name = next((k for k, v in props_schema.items() if "url" in k.lower() and "inaturalist" in k.lower()), "URL Inaturalist")
     
-    # Fetch all records with a non-empty iNaturalist URL.
-    # This is significantly faster and more reliable than passing hundreds of 'OR' conditions,
-    # which causes Notion's database engine to time out.
-    payload = {
-        "filter": {
-            "property": url_property_name,
-            "url": {
-                "is_not_empty": True
-            }
-        }
-    }
-    
     try:
-        with requests.Session() as session:
-            session.headers.update(headers)
-            has_more = True
-            while has_more:
-                last_resp = None
-                for attempt in range(5):
-                    try:
-                        resp = session.post(api_url, json=payload, timeout=15)
-                        last_resp = resp
-                        if resp.status_code == 200:
-                            break
-                        if resp.status_code == 429 or 500 <= resp.status_code < 600:
-                            retry_after = resp.headers.get("Retry-After")
-                            try:
-                                wait = float(retry_after) if retry_after else (2 ** attempt + random.random())
-                            except (ValueError, TypeError):
-                                wait = 2 ** attempt + random.random()
-                            time.sleep(wait)
-                            continue
-                        break
-                    except requests.RequestException as e:
-                        if attempt < 4:
-                            time.sleep(2 ** attempt + random.random())
-                            continue
-                        raise RuntimeError(f"Erreur réseau lors de la vérification des doublons Notion : {e}") from e
-
-                if last_resp is None or last_resp.status_code != 200:
-                    error_msg = f"Notion Query Error {last_resp.status_code if last_resp else 'Unknown'}: {last_resp.text if last_resp else 'No response'}"
-                    print(error_msg)
-                    raise RuntimeError(error_msg)
-                
-                data = last_resp.json()
-                results = data.get("results", [])
-                for r in results:
-                    props = r.get("properties", {})
-                    url_prop = props.get(url_property_name, {})
-                    if url_prop.get("type") == "url" and url_prop.get("url"):
-                        url_val = url_prop["url"]
-                        match = re.search(r'/(\d+)', url_val)
-                        if match:
-                            existing_ids.add(match.group(1))
-
-                has_more = data.get("has_more", False)
-                if has_more:
-                    payload["start_cursor"] = data.get("next_cursor")
-    except Exception as e:
-        print(f"Error checking existing Notion URLs: {e}")
-        raise RuntimeError(f"Erreur lors de la vérification des doublons Notion : {e}") from e
+        # Convert to tuple for caching
+        all_existing_ids = _cached_check_notion_duplicates(tuple(ids), token, db_id, url_property_name)
+    except RuntimeError as e:
+        # Prevent completely failing if Notion is momentarily down, but still raise for safety
+        raise e
         
     # Return only the IDs that were actually in our requested list
-    return existing_ids.intersection(set(ids))
+    return all_existing_ids.intersection(set(ids))
 
 
 def get_notion_mycologists():
@@ -476,7 +505,7 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
 
     # Regex strict : Prefix + Digits only (e.g. MRD0015)
     # Case insensitive match for prefix, but digits at end
-    regex_pattern = re.compile(f"^{re.escape(prefix)}\\d+$", re.IGNORECASE)
+    regex_pattern = re.compile(fr"^{re.escape(prefix)}\d+$", re.IGNORECASE)
 
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=15)
@@ -779,7 +808,7 @@ elif nav_mode == "📊 Tableau de Bord":
         st.divider()
 
     # --- INTERFACE (Tabs) ---
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes", "📚 Explorer Notion", "🧹 Nettoyeur CSV", "🔗 Relations"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes", "📚 Explorer Notion", "🧹 Nettoyeur CSV", "🛠️ Maintenance des relations"])
     params = {}
     run_search = False
     import_list = [] # Will hold IDs or Obs to import
@@ -2392,10 +2421,9 @@ elif nav_mode == "📊 Tableau de Bord":
                     except Exception as e:
                         return (None, f"{sci_name} (ID: {obs_id}) : {e!s}")
 
-                # --- CHARGEMENT DES MAPS D'ENRICHISSEMENT (une fois par session) ---
+                # --- CHARGEMENT DES MAPS D'ENRICHISSEMENT (Cache 1h) ---
                 if st.session_state.enricher_maps is None and NOTION_TOKEN:
-                    with st.spinner("Chargement des référentiels (Mycoliste, Stations, Codes)…"):
-                        st.session_state.enricher_maps = enricher.build_lookup_maps(NOTION_TOKEN)
+                    st.session_state.enricher_maps = cached_build_lookup_maps(NOTION_TOKEN)
                     errs = st.session_state.enricher_maps.get("_errors", [])
                     if errs:
                         st.warning(f"⚠️ Référentiels partiellement chargés : {', '.join(errs)}")
@@ -2563,11 +2591,13 @@ elif nav_mode == "📊 Tableau de Bord":
                 st.error(f"Erreur lors de la lecture du fichier CSV : {error_msg}")
 
     with tab6:
-        st.header("🔗 Résolution des relations")
+        st.header("🛠️ Maintenance & Réparation des relations")
+        st.info(
+            "**Note :** Le mapping des relations (Espèce, Station, Habitat) est déjà effectué automatiquement lors de l'importation classique. "
+            "Cet outil est uniquement destiné à **réparer** ou **enrichir rétroactivement** des observations déjà présentes dans Notion."
+        )
         st.markdown(
-            "Cet outil résout automatiquement les relations **Espèce, Station, Habitat, Substrat** "
-            "pour les observations Notion qui n'ont pas encore été enrichies.\n\n"
-            "Utile pour corriger les observations importées avant la mise en place de ce système."
+            "Il analyse les observations Notion et tente de lier les pages correspondantes dans les bases Mycoliste, Stations, Habitats et Substrats."
         )
 
         if not NOTION_TOKEN:
@@ -2591,9 +2621,10 @@ elif nav_mode == "📊 Tableau de Bord":
                     st.info("Référentiels non encore chargés (ils se chargent automatiquement au premier import).")
 
             with col_reset:
-                if st.button("🔄 Recharger les référentiels"):
-                    with st.spinner("Chargement…"):
-                        st.session_state.enricher_maps = enricher.build_lookup_maps(NOTION_TOKEN)
+                if st.button("🔄 Forcer le rafraîchissement"):
+                    st.cache_data.clear() # Clear everything to be sure
+                    st.session_state.enricher_maps = cached_build_lookup_maps(NOTION_TOKEN)
+                    st.success("Référentiels rechargés !")
                     st.rerun()
 
             st.divider()
@@ -2656,4 +2687,4 @@ elif nav_mode == "📊 Tableau de Bord":
                 if result["errors"]:
                     with st.expander(f"⚠️ {len(result['errors'])} erreurs / non résolus"):
                         for err in result["errors"]:
-                            st.write(f"- {err}")
+                            st.write(f"- {err}")\n
