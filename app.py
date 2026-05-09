@@ -2362,11 +2362,14 @@ elif nav_mode == "📊 Tableau de Bord":
                                     session=session,
                                 )
                                 if not ok_enrich:
-                                    raise Exception(f"Échec de l'enrichissement : {msg_enrich}")
+                                    # Non-fatal warning if enrichment couldn't find a match
+                                    warning_msg = f"⚠️ Importation réussie mais enrichissement partiel pour {sci_name} (ID: {obs_id}) : {msg_enrich}"
+                                    return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
                             except Exception as enrich_err:
-                                # Log and re-raise to ensure the import is marked as failed/warning
+                                # Log as a warning but don't fail the whole import for this observation
                                 print(f"Erreur enrichissement pour {sci_name}: {enrich_err}")
-                                raise Exception(f"Problème lors de la résolution taxonomique : {enrich_err}")
+                                warning_msg = f"⚠️ Importation réussie mais échec de l'enrichissement taxonomique pour {sci_name} (ID: {obs_id}). Erreur : {enrich_err!s}"
+                                return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
 
                         return ({"name": sci_name, "id": obs_id, "url": p_url}, None)
 

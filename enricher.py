@@ -13,6 +13,7 @@ aucune modification de code requise quand une nouvelle station ou un nouveau cod
 
 import re
 import time
+import random
 import requests
 
 NOTION_VERSION = "2022-06-28"
@@ -48,25 +49,58 @@ def _headers(token: str) -> dict:
 
 
 def _query_db_all(token: str, db_id: str, session: requests.Session | None = None) -> list:
-    """Requête paginée sur une DB Notion — retourne toutes les pages."""
+    """Requête paginée sur une DB Notion — retourne toutes les pages avec retry robuste."""
     results = []
     cursor = None
     url = f"https://api.notion.com/v1/databases/{db_id}/query"
-    
-    # Use provided session or fallback to global requests
     requester = session if session else requests
     
     while True:
         body = {"page_size": 100}
         if cursor:
             body["start_cursor"] = cursor
-        resp = requester.post(url, headers=_headers(token), json=body, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+            
+        # Retry loop for the POST request
+        last_resp = None
+        for attempt in range(5):
+            try:
+                resp = requester.post(url, headers=_headers(token), json=body, timeout=30)
+                last_resp = resp
+                
+                # Success
+                if resp.status_code == 200:
+                    break
+                    
+                # Retry on 429 (Rate Limit) or 5xx (Server Error)
+                if resp.status_code == 429 or 500 <= resp.status_code < 600:
+                    # Exponential backoff + jitter
+                    retry_after = resp.headers.get("Retry-After")
+                    try:
+                        wait = float(retry_after) if retry_after else (2 ** attempt + random.random())
+                    except (ValueError, TypeError):
+                        wait = 2 ** attempt + random.random()
+                    time.sleep(wait)
+                    continue
+                
+                # Other errors: raise immediately
+                resp.raise_for_status()
+                
+            except (requests.exceptions.RequestException, requests.exceptions.HTTPError) as e:
+                # Retry on network errors
+                if attempt < 4:
+                    time.sleep(2 ** attempt + random.random())
+                    continue
+                raise
+        
+        if last_resp is None:
+            raise Exception("Impossible de contacter l'API Notion après plusieurs tentatives.")
+            
+        data = last_resp.json()
         results.extend(data.get("results", []))
         if not data.get("has_more"):
             break
         cursor = data.get("next_cursor")
+        
     return results
 
 
