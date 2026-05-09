@@ -108,28 +108,31 @@ def get_existing_notion_ids(ids, token, db_id, props_schema=None):
     }
     
     try:
-        has_more = True
-        while has_more:
-            resp = requests.post(api_url, headers=headers, json=payload, timeout=15)
-            if resp.status_code == 200:
-                data = resp.json()
-                results = data.get("results", [])
-                for r in results:
-                    props = r.get("properties", {})
-                    url_prop = props.get(url_property_name, {})
-                    if url_prop.get("type") == "url" and url_prop.get("url"):
-                        url_val = url_prop["url"]
-                        match = re.search(r'/(\d+)', url_val)
-                        if match:
-                            existing_ids.add(match.group(1))
-                
-                has_more = data.get("has_more", False)
-                if has_more:
-                    payload["start_cursor"] = data.get("next_cursor")
-            else:
-                error_msg = f"Notion Query Error {resp.status_code}: {resp.text}"
-                print(error_msg)
-                raise RuntimeError(error_msg)
+        with requests.Session() as session:
+            session.headers.update(headers)
+            has_more = True
+            while has_more:
+                resp = session.post(api_url, json=payload, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    results = data.get("results", [])
+                    for r in results:
+                        props = r.get("properties", {})
+                        url_prop = props.get(url_property_name, {})
+                        if url_prop.get("type") == "url" and url_prop.get("url"):
+                            url_val = url_prop["url"]
+                            import re
+                            match = re.search(r'/(\d+)', url_val)
+                            if match:
+                                existing_ids.add(match.group(1))
+
+                    has_more = data.get("has_more", False)
+                    if has_more:
+                        payload["start_cursor"] = data.get("next_cursor")
+                else:
+                    error_msg = f"Notion Query Error {resp.status_code}: {resp.text}"
+                    print(error_msg)
+                    raise RuntimeError(error_msg)
     except requests.RequestException as e:
         print(f"Network/HTTP error checking existing Notion URLs: {e}")
         raise RuntimeError(f"Erreur réseau lors de la vérification des doublons Notion : {e}") from e
@@ -374,21 +377,23 @@ def count_user_notion_obs(token, db_id, target_user):
     next_cursor = None
     
     try:
-        while has_more:
-            if next_cursor:
-                payload["start_cursor"] = next_cursor
-            
-            resp = requests.post(url, headers=headers, json=payload, timeout=15)
-            if resp.status_code != 200:
-                print(f"Error Counting: {resp.status_code} {resp.text}")
-                break
+        with requests.Session() as session:
+            session.headers.update(headers)
+            while has_more:
+                if next_cursor:
+                    payload["start_cursor"] = next_cursor
                 
-            data = resp.json()
-            results = data.get("results", [])
-            total_count += len(results)
-            
-            has_more = data.get("has_more", False)
-            next_cursor = data.get("next_cursor")
+                resp = session.post(url, json=payload)
+                if resp.status_code != 200:
+                    print(f"Error Counting: {resp.status_code} {resp.text}")
+                    break
+
+                data = resp.json()
+                results = data.get("results", [])
+                total_count += len(results)
+
+                has_more = data.get("has_more", False)
+                next_cursor = data.get("next_cursor")
             
     except requests.RequestException as e:
         print(f"Network/HTTP error counting Notion observations: {e}")
@@ -1262,13 +1267,14 @@ elif nav_mode == "📊 Tableau de Bord":
                             # Cache for Relation Names to avoid repeated API calls
                             relation_cache = {}
                             
-                            def get_relation_name(page_id):
+                            def get_relation_name(page_id, session=None):
                                 """
                                 Récupère le nom (titre) d'une page liée par relation.
                                 Utilise un cache local pour éviter les appels API redondants.
                                 
                                 Args:
                                     page_id (str): ID de la page Notion cible.
+                                    session (requests.Session, optional): Session pour réutiliser les connexions.
                                     
                                 Returns:
                                     str: Titre de la page ou 'Inconnu'/'Erreur'.
@@ -1278,7 +1284,10 @@ elif nav_mode == "📊 Tableau de Bord":
                                 
                                 try:
                                     r_url = f"https://api.notion.com/v1/pages/{page_id}"
-                                    r_resp = requests.get(r_url, headers=headers, timeout=10)
+                                    if session:
+                                        r_resp = session.get(r_url)
+                                    else:
+                                        r_resp = requests.get(r_url, headers=headers)
                                     if r_resp.status_code == 200:
                                         r_props = r_resp.json().get("properties", {})
                                         # Try to find Name/Title
@@ -1313,16 +1322,18 @@ elif nav_mode == "📊 Tableau de Bord":
                                         # 2. Pre-fetch them in parallel (skipping those already in cache)
                                         to_fetch = [uid for uid in ids_to_resolve if uid not in relation_cache]
                                         if to_fetch:
-                                            with ThreadPoolExecutor(max_workers=5) as executor:
-                                                futs = {executor.submit(get_relation_name, uid): uid for uid in to_fetch}
-                                                for fut in as_completed(futs):
-                                                    uid = futs[fut]
-                                                    try:
-                                                        fut.result()
-                                                    except Exception as e:
-                                                        print(f"Error fetching relation name for {uid}: {e}")
-                                                        # Internal error handling in get_relation_name usually returns 'Erreur' 
-                                                        # but we log the unexpected exception here just in case.
+                                            with requests.Session() as session:
+                                                session.headers.update(headers)
+                                                with ThreadPoolExecutor(max_workers=5) as executor:
+                                                    futs = {executor.submit(get_relation_name, uid, session=session): uid for uid in to_fetch}
+                                                    for fut in as_completed(futs):
+                                                        uid = futs[fut]
+                                                        try:
+                                                            fut.result()
+                                                        except Exception as e:
+                                                            print(f"Error fetching relation name for {uid}: {e}")
+                                                            # Internal error handling in get_relation_name usually returns 'Erreur'
+                                                            # but we log the unexpected exception here just in case.
 
                                         # 3. Main processing loop (now extremely fast as it hits the cache)
                                         for idx, row in selected_rows.iterrows():
