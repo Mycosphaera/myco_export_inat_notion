@@ -15,16 +15,17 @@ import re
 import time
 import random
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 NOTION_VERSION = "2022-06-28"
 
 # IDs des bases de données Notion (sans tirets pour les constantes, formatés à l'usage)
 DB_IDS = {
     "mycoliste":    "1d8b20f2-b231-8166-aa5d-c1d48a5d6b25",
-    "stations":     "21eb20f2-b231-80d1-9086-000bb5f951ef",
-    "habitats":     "1ecb20f2-b231-80d2-a423-000b63e5c948",
-    "substrats":    "1deb20f2-b231-80db-8afc-000b75dec26d",
-    "vegetation":   "1fdb20f2-b231-80b3-9305-000bee638229",
+    "stations":     "21eb20f2-b231-8005-8889-f00269290d91",
+    "habitats":     "1ecb20f2-b231-805b-ba21-edc052d574f1",
+    "substrats":    "1deb20f2-b231-804d-8f5d-e5d9cf67a906",
+    "vegetation":   "1fdb20f2-b231-80b4-83a4-d64e12ba5c85",
 }
 
 # Noms des propriétés Notion dans la DB Observations (à ajuster si renommés)
@@ -32,6 +33,7 @@ PROP_ESPECE          = "Espèce"
 PROP_STATION         = "Station d'inventaire"
 PROP_HABITAT         = "Habitat général"
 PROP_SUBSTRAT        = "Substrat"
+PROP_VEGETATION      = "Plante associée"
 PROP_FONGARIUM_CHECK = "Fongarium"
 PROP_TAXON_ID        = "Inat Taxon ID"
 
@@ -105,7 +107,12 @@ def _query_db_all(token: str, db_id: str, session: requests.Session | None = Non
             raise Exception("Impossible de contacter l'API Notion après plusieurs tentatives.")
             
         data = last_resp.json()
+        batch_size = len(data.get("results", []))
         results.extend(data.get("results", []))
+        
+        # Log progress to terminal
+        print(f"  [Notion] DB {db_id[:8]}... : {len(results)} pages récupérées...")
+        
         if not data.get("has_more"):
             break
         cursor = data.get("next_cursor")
@@ -188,103 +195,126 @@ def _strip_infraspecific(name: str) -> str:
 
 def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
     """
-    Charge les maps de résolution depuis Notion.
-
-    Retourne un dict avec :
-      - species_map    : { lowercase_name → page_id }  (4700+ entrées, paginé)
-      - station_map    : { CODE_MAJUSCULE → page_id }
-      - habitat_codes  : { CODE_MAJUSCULE → page_id }
-      - substrat_codes : { CODE_MAJUSCULE → page_id }
-
-    À appeler une fois par session (mettre en cache dans st.session_state).
+    Charge les maps de résolution depuis Notion en parallèle.
     """
     if db_ids is None:
         db_ids = DB_IDS
 
-    maps: dict = {}
-    errors: list = []
+    maps: dict = {
+        "species_map": {},
+        "taxon_id_map": {},
+        "old_names_map": {},
+        "station_map": {},
+        "habitat_codes": {},
+        "substrat_codes": {},
+        "_errors": []
+    }
 
-    with requests.Session() as session:
-        # --- Mycoliste (4700+ taxons, requête paginée) ---
+    def _load_mycoliste(session):
+        print(f"[Notion] Chargement de Mycoliste ({db_ids['mycoliste']})...")
+        start_t = time.time()
         try:
-            species_map: dict   = {}  # { lowercase_name → page_id }
-            taxon_id_map: dict  = {}  # { inat_taxon_id (int) → page_id }
-            old_names_map: dict = {}  # { lowercase_old_name → page_id }
-
             pages = _query_db_all(token, db_ids["mycoliste"], session=session)
+            s_map, t_map, o_map = {}, {}, {}
             for p in pages:
-                pid   = p["id"]
+                pid = p["id"]
                 props = p["properties"]
-                name  = _get_title(props)
-                if name:
-                    species_map[_normalize(name)] = pid
-
-                # Inat Taxon ID (number)
+                name = _get_title(props)
+                if name: s_map[_normalize(name)] = pid
                 tid = extract_taxon_id_from_props(props)
-                if tid is not None:
-                    taxon_id_map[tid] = pid
-
-                # Ancien(s) Nom (rich_text)
+                if tid is not None: t_map[tid] = pid
                 old_name_raw = _get_rich_text(props.get("Ancien(s) Nom", {}))
                 if old_name_raw:
                     for part in re.split(r"[,;]", old_name_raw):
                         part = part.strip()
-                        if part:
-                            old_names_map[_normalize(part)] = pid
+                        if part: o_map[_normalize(part)] = pid
+            print(f"[Notion] Mycoliste chargée : {len(s_map)} taxons en {time.time()-start_t:.1f}s")
+            return {"species_map": s_map, "taxon_id_map": t_map, "old_names_map": o_map}
+        except Exception as e:
+            print(f"[Notion] Erreur Mycoliste: {e}")
+            return {"error": f"Mycoliste: {e}"}
 
-            maps["species_map"]   = species_map
-            maps["taxon_id_map"]  = taxon_id_map
-            maps["old_names_map"] = old_names_map
-        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
-            errors.append(f"Mycoliste: {e}")
-            maps["species_map"]   = {}
-            maps["taxon_id_map"]  = {}
-            maps["old_names_map"] = {}
-
-        # --- Stations d'inventaire ---
+    def _load_stations(session):
+        print(f"[Notion] Chargement des Stations...")
+        start_t = time.time()
         try:
-            station_map: dict = {}
             pages = _query_db_all(token, db_ids["stations"], session=session)
+            st_map = {}
             for p in pages:
                 props = p["properties"]
                 code = _get_rich_text(props.get("Code de la station", {}))
                 if not code:
                     title = _get_title(props)
                     code = title.split()[0] if title else ""
-                if code:
-                    station_map[code.upper()] = p["id"]
-            maps["station_map"] = station_map
-        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
-            errors.append(f"Stations: {e}")
-            maps["station_map"] = {}
+                if code: st_map[code.upper()] = p["id"]
+            print(f"[Notion] Stations chargées : {len(st_map)} en {time.time()-start_t:.1f}s")
+            return {"station_map": st_map}
+        except Exception as e:
+            print(f"[Notion] Erreur Stations: {e}")
+            return {"error": f"Stations: {e}"}
 
-        # --- Habitats ---
+    def _load_habitats(session):
+        print(f"[Notion] Chargement des Habitats...")
+        start_t = time.time()
         try:
-            habitat_codes: dict = {}
             pages = _query_db_all(token, db_ids["habitats"], session=session)
+            h_map = {}
             for p in pages:
                 code = _get_rich_text(p["properties"].get("Code terrain", {}))
-                if code:
-                    habitat_codes[code.upper()] = p["id"]
-            maps["habitat_codes"] = habitat_codes
-        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
-            errors.append(f"Habitats: {e}")
-            maps["habitat_codes"] = {}
+                if code: h_map[code.upper()] = p["id"]
+            print(f"[Notion] Habitats chargés : {len(h_map)} en {time.time()-start_t:.1f}s")
+            return {"habitat_codes": h_map}
+        except Exception as e:
+            print(f"[Notion] Erreur Habitats: {e}")
+            return {"error": f"Habitats: {e}"}
 
-        # --- Substrats ---
+    def _load_substrats(session):
+        print(f"[Notion] Chargement des Substrats...")
+        start_t = time.time()
         try:
-            substrat_codes: dict = {}
             pages = _query_db_all(token, db_ids["substrats"], session=session)
+            su_map = {}
             for p in pages:
                 code = _get_rich_text(p["properties"].get("Code terrain", {}))
-                if code:
-                    substrat_codes[code.upper()] = p["id"]
-            maps["substrat_codes"] = substrat_codes
-        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
-            errors.append(f"Substrats: {e}")
-            maps["substrat_codes"] = {}
+                if code: su_map[code.upper()] = p["id"]
+            print(f"[Notion] Substrats chargés : {len(su_map)} en {time.time()-start_t:.1f}s")
+            return {"substrat_codes": su_map}
+        except Exception as e:
+            print(f"[Notion] Erreur Substrats: {e}")
+            return {"error": f"Substrats: {e}"}
 
-    maps["_errors"] = errors
+    def _load_vegetation(session):
+        print(f"[Notion] Chargement de la Végétation...")
+        start_t = time.time()
+        try:
+            pages = _query_db_all(token, db_ids["vegetation"], session=session)
+            v_map = {}
+            for p in pages:
+                name = _get_title(p["properties"])
+                if name: v_map[_normalize(name)] = p["id"]
+            print(f"[Notion] Végétation chargée : {len(v_map)} en {time.time()-start_t:.1f}s")
+            return {"vegetation_map": v_map}
+        except Exception as e:
+            print(f"[Notion] Erreur Végétation: {e}")
+            return {"error": f"Végétation: {e}"}
+
+    with requests.Session() as session:
+        tasks = [
+            _load_mycoliste,
+            _load_stations,
+            _load_habitats,
+            _load_substrats,
+            _load_vegetation
+        ]
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(t, session) for t in tasks]
+            for fut in as_completed(futures):
+                res = fut.result()
+                if "error" in res:
+                    maps["_errors"].append(res["error"])
+                else:
+                    maps.update(res)
+
     return maps
 
 
@@ -292,7 +322,13 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
 # 2. parse_description_codes
 # ---------------------------------------------------------------------------
 
-def parse_description_codes(description: str, station_map: dict, habitat_codes: dict, substrat_codes: dict) -> dict:
+def parse_description_codes(
+    description: str,
+    station_map: dict,
+    habitat_codes: dict,
+    substrat_codes: dict,
+    vegetation_map: dict = None,
+) -> dict:
     """
     Extrait les codes terrain préfixés par '#' depuis Description rapide.
 
@@ -309,6 +345,7 @@ def parse_description_codes(description: str, station_map: dict, habitat_codes: 
         "has_coll"          : bool,
         "habitat_page_ids"  : list[str],
         "substrat_page_ids" : list[str],
+        "vegetation_page_ids": list[str],
       }
     """
     result = {
@@ -316,6 +353,7 @@ def parse_description_codes(description: str, station_map: dict, habitat_codes: 
         "has_coll": False,
         "habitat_page_ids": [],
         "substrat_page_ids": [],
+        "vegetation_page_ids": [],
     }
 
     if not description:
@@ -333,6 +371,14 @@ def parse_description_codes(description: str, station_map: dict, habitat_codes: 
             result["substrat_page_ids"].append(substrat_codes[code])
         elif code in station_map:
             result["station_code"] = code
+        elif vegetation_map:
+            # Match dynamique sur le nom normalisé de la plante
+            # (Ex: #Abies_balsamea -> match "abies balsamea")
+            norm_code = code.replace("_", " ").lower()
+            if norm_code in vegetation_map:
+                result["vegetation_page_ids"].append(vegetation_map[norm_code])
+        # On pourrait ajouter un préfixe spécifique pour la végétation si besoin, ex: #V_EPIN_NOIRE
+        # Pour l'instant on ne fait que les types explicites connus.
 
     return result
 
@@ -431,8 +477,9 @@ def resolve_and_update_relations(
     station_map    = maps.get("station_map", {})
     habitat_codes  = maps.get("habitat_codes", {})
     substrat_codes = maps.get("substrat_codes", {})
+    vegetation_map = maps.get("vegetation_map", {})
 
-    parsed     = parse_description_codes(description, station_map, habitat_codes, substrat_codes)
+    parsed     = parse_description_codes(description, station_map, habitat_codes, substrat_codes, vegetation_map)
     species_id = match_species(taxon_name, species_map, taxon_id, taxon_id_map, old_names_map)
 
     props: dict = {}
@@ -475,6 +522,12 @@ def resolve_and_update_relations(
     if parsed["substrat_page_ids"]:
         props[PROP_SUBSTRAT] = {"relation": [{"id": sid} for sid in parsed["substrat_page_ids"]]}
         log.append(f"Substrat→{len(parsed['substrat_page_ids'])} lié(s)")
+
+    # Végétation (Plante associée)
+    # Note: On pourrait aussi tenter un match par texte si la description contient des noms de plantes
+    if parsed["vegetation_page_ids"]:
+        props[PROP_VEGETATION] = {"relation": [{"id": vid} for vid in parsed["vegetation_page_ids"]]}
+        log.append(f"Végétation→{len(parsed['vegetation_page_ids'])} liée(s)")
 
     if not props:
         return False, "Rien à résoudre"
