@@ -20,7 +20,7 @@ NOTION_VERSION = "2022-06-28"
 
 # IDs des bases de données Notion (sans tirets pour les constantes, formatés à l'usage)
 DB_IDS = {
-    "mycoliste":    "1d8b20f2-b231-8103-8ede-000b6155471d",
+    "mycoliste":    "1d8b20f2-b231-8166-aa5d-c1d48a5d6b25",
     "stations":     "21eb20f2-b231-80d1-9086-000bb5f951ef",
     "habitats":     "1ecb20f2-b231-80d2-a423-000b63e5c948",
     "substrats":    "1deb20f2-b231-80db-8afc-000b75dec26d",
