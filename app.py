@@ -2215,6 +2215,16 @@ elif nav_mode == "📊 Tableau de Bord":
                                 else:
                                     print(f"Warning: Property '{fong_checkbox_key}' found but is not a checkbox type.")
                         
+                        # iNat Taxon ID
+                        inat_taxon_id = obs_obj.get("taxon", {}).get("id")
+                        if inat_taxon_id:
+                            taxon_id_key = next((k for k, v in db_props_schema.items() if "taxon" in k.lower() and "id" in k.lower() and v["type"] == "number"), None)
+                            if not taxon_id_key and "Inat Taxon ID" in db_props_schema:
+                                taxon_id_key = "Inat Taxon ID"
+                            
+                            if taxon_id_key:
+                                props[taxon_id_key] = {"number": int(inat_taxon_id)}
+
                         description = obs_obj.get('description', '')
                         if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
                         

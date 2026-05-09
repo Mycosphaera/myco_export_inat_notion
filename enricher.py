@@ -32,6 +32,7 @@ PROP_STATION         = "Station d'inventaire"
 PROP_HABITAT         = "Habitat général"
 PROP_SUBSTRAT        = "Substrat"
 PROP_FONGARIUM_CHECK = "Fongarium"
+PROP_TAXON_ID        = "Inat Taxon ID"
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +149,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
                 species_map[_normalize(name)] = pid
 
             # Inat Taxon ID (number)
-            inat_id_prop = props.get("Inat Taxon ID", {})
+            inat_id_prop = props.get(PROP_TAXON_ID, {})
             if inat_id_prop.get("type") == "number" and inat_id_prop.get("number") is not None:
                 taxon_id_map[int(inat_id_prop["number"])] = pid
 
@@ -163,7 +164,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         maps["species_map"]   = species_map
         maps["taxon_id_map"]  = taxon_id_map
         maps["old_names_map"] = old_names_map
-    except Exception as e:
+    except (requests.RequestException, KeyError, TypeError) as e:
         errors.append(f"Mycoliste: {e}")
         maps["species_map"]   = {}
         maps["taxon_id_map"]  = {}
@@ -184,7 +185,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             if code:
                 station_map[code.upper()] = p["id"]
         maps["station_map"] = station_map
-    except Exception as e:
+    except (requests.RequestException, KeyError, TypeError) as e:
         errors.append(f"Stations: {e}")
         maps["station_map"] = {}
 
@@ -197,7 +198,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             if code:
                 habitat_codes[code.upper()] = p["id"]
         maps["habitat_codes"] = habitat_codes
-    except Exception as e:
+    except (requests.RequestException, KeyError, TypeError) as e:
         errors.append(f"Habitats: {e}")
         maps["habitat_codes"] = {}
 
@@ -210,7 +211,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             if code:
                 substrat_codes[code.upper()] = p["id"]
         maps["substrat_codes"] = substrat_codes
-    except Exception as e:
+    except (requests.RequestException, KeyError, TypeError) as e:
         errors.append(f"Substrats: {e}")
         maps["substrat_codes"] = {}
 
@@ -458,6 +459,12 @@ def batch_resolve(
         desc_prop = props.get("Description rapide", {})
         description = _get_rich_text(desc_prop)
 
+        # Récupère Inat Taxon ID (si présent)
+        taxon_id_prop = props.get(PROP_TAXON_ID, {})
+        taxon_id = None
+        if taxon_id_prop.get("type") == "number" and taxon_id_prop.get("number") is not None:
+            taxon_id = int(taxon_id_prop["number"])
+
         if not taxon_name:
             skipped += 1
             if progress_callback:
@@ -465,7 +472,7 @@ def batch_resolve(
             continue
 
         ok, msg = resolve_and_update_relations(
-            page_id, taxon_name, description, maps, token, db_props_schema
+            page_id, taxon_name, description, maps, token, db_props_schema, taxon_id=taxon_id
         )
         if ok:
             success += 1
