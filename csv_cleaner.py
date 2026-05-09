@@ -21,7 +21,9 @@ def parse_csv(uploaded_file):
         
     last_error = None
     # Notion / Windows exports can sometimes have different encodings
-    for encoding in ['utf-8-sig', 'utf-8', 'iso-8859-1', 'cp1252']:
+    encodings = ['utf-8-sig', 'utf-8', 'mac_roman', 'cp1252', 'iso-8859-1']
+    
+    for encoding in encodings:
         try:
             uploaded_file.seek(0)
             # Try with semicolon first (legacy priority)
@@ -35,11 +37,18 @@ def parse_csv(uploaded_file):
             # Strip header names
             df.columns = [str(c).strip() for c in df.columns]
             return df, None
+        except UnicodeError as e:
+            # Mauvais encodage, on essaie le suivant
+            last_error = f"Erreur d'encodage ({encoding}) : {e}"
+            continue
+        except pd.errors.ParserError as e:
+            # L'encodage est probablement bon, mais la structure CSV est cassée (ex: guillemets mal fermés, colonnes manquantes)
+            return None, f"Structure du CSV invalide (erreur de parsing avec {encoding}). Raison : {e}"
         except Exception as e:
             last_error = str(e)
             continue
             
-    return None, f"Le fichier n'a pas pu être lu. Raison : {last_error}"
+    return None, f"Le fichier n'a pas pu être lu avec les encodages standards. Dernière erreur : {last_error}"
 
 def clean_cell(value):
     """
