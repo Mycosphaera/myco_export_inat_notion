@@ -82,9 +82,6 @@ def _cached_check_notion_duplicates(ids_tuple, token, db_id, url_property_name):
     Vérifie quels IDs iNaturalist parmi la liste fournie existent déjà dans Notion, en utilisant l'URL.
     Fait des requêtes par paquets de 100 en parallèle pour optimiser la performance.
     """
-    import requests
-    import re
-    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     existing_ids = set()
     headers = {
@@ -179,12 +176,8 @@ def get_existing_notion_ids(ids, token, db_id, props_schema=None):
     if props_schema:
         url_property_name = next((k for k, v in props_schema.items() if "url" in k.lower() and "inaturalist" in k.lower()), "URL Inaturalist")
     
-    try:
-        # Convert to tuple for caching
-        all_existing_ids = _cached_check_notion_duplicates(tuple(ids), token, db_id, url_property_name)
-    except RuntimeError as e:
-        # Prevent completely failing if Notion is momentarily down, but still raise for safety
-        raise e
+    # Convert to tuple for caching
+    all_existing_ids = _cached_check_notion_duplicates(tuple(ids), token, db_id, url_property_name)
         
     # Return only the IDs that were actually in our requested list
     return all_existing_ids.intersection(set(ids))
@@ -2687,4 +2680,4 @@ elif nav_mode == "📊 Tableau de Bord":
                 if result["errors"]:
                     with st.expander(f"⚠️ {len(result['errors'])} erreurs / non résolus"):
                         for err in result["errors"]:
-                            st.write(f"- {err}")\n
+                            st.write(f"- {err}")
