@@ -17,21 +17,29 @@ def parse_csv(uploaded_file):
     Supports both semicolon (standard Notion export) and comma (unstructured) variants.
     """
     if uploaded_file is None:
-        return None
+        return None, "Aucun fichier fourni."
         
-    try:
-        # Try with semicolon first (legacy priority)
-        df = pd.read_csv(uploaded_file, sep=";", dtype=str)
-        # If it parsed as 1 column, fallback to comma
-        if len(df.columns) <= 1:
+    last_error = None
+    # Notion / Windows exports can sometimes have different encodings
+    for encoding in ['utf-8-sig', 'utf-8', 'iso-8859-1', 'cp1252']:
+        try:
             uploaded_file.seek(0)
-            df = pd.read_csv(uploaded_file, sep=",", dtype=str)
-        # Strip header names
-        df.columns = [str(c).strip() for c in df.columns]
-        return df
-    except Exception as e:
-        print(f"Error parsing CSV: {e}")
-        return None
+            # Try with semicolon first (legacy priority)
+            df = pd.read_csv(uploaded_file, sep=";", dtype=str, encoding=encoding)
+            
+            # If it parsed as 1 column, fallback to comma
+            if len(df.columns) <= 1:
+                uploaded_file.seek(0)
+                df = pd.read_csv(uploaded_file, sep=",", dtype=str, encoding=encoding)
+            
+            # Strip header names
+            df.columns = [str(c).strip() for c in df.columns]
+            return df, None
+        except Exception as e:
+            last_error = str(e)
+            continue
+            
+    return None, f"Le fichier n'a pas pu être lu. Raison : {last_error}"
 
 def clean_cell(value):
     """

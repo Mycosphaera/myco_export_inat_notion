@@ -2479,7 +2479,7 @@ elif nav_mode == "📊 Tableau de Bord":
 
         if uploaded_file is not None:
             with st.spinner("Analyse du fichier..."):
-                df = csv_cleaner.parse_csv(uploaded_file)
+                df, error_msg = csv_cleaner.parse_csv(uploaded_file)
             
             if df is not None:
                 st.success(f"Fichier chargé avec succès ! ({len(df)} lignes)")
@@ -2565,7 +2565,7 @@ elif nav_mode == "📊 Tableau de Bord":
                     type="primary"
                 )
             else:
-                st.error("Erreur lors de la lecture du fichier CSV. Assurez-vous qu'il s'agit bien d'un export au format standard.")
+                st.error(f"Erreur lors de la lecture du fichier CSV : {error_msg}")
 
     with tab6:
         st.header("🔗 Résolution des relations")
