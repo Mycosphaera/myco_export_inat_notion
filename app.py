@@ -112,29 +112,50 @@ def get_existing_notion_ids(ids, token, db_id, props_schema=None):
             session.headers.update(headers)
             has_more = True
             while has_more:
-                resp = session.post(api_url, json=payload, timeout=15)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    results = data.get("results", [])
-                    for r in results:
-                        props = r.get("properties", {})
-                        url_prop = props.get(url_property_name, {})
-                        if url_prop.get("type") == "url" and url_prop.get("url"):
-                            url_val = url_prop["url"]
-                            match = re.search(r'/(\d+)', url_val)
-                            if match:
-                                existing_ids.add(match.group(1))
+                last_resp = None
+                for attempt in range(5):
+                    try:
+                        resp = session.post(api_url, json=payload, timeout=15)
+                        last_resp = resp
+                        if resp.status_code == 200:
+                            break
+                        if resp.status_code == 429 or 500 <= resp.status_code < 600:
+                            retry_after = resp.headers.get("Retry-After")
+                            try:
+                                wait = float(retry_after) if retry_after else (2 ** attempt + random.random())
+                            except (ValueError, TypeError):
+                                wait = 2 ** attempt + random.random()
+                            time.sleep(wait)
+                            continue
+                        break
+                    except requests.RequestException as e:
+                        if attempt < 4:
+                            time.sleep(2 ** attempt + random.random())
+                            continue
+                        raise RuntimeError(f"Erreur réseau lors de la vérification des doublons Notion : {e}") from e
 
-                    has_more = data.get("has_more", False)
-                    if has_more:
-                        payload["start_cursor"] = data.get("next_cursor")
-                else:
-                    error_msg = f"Notion Query Error {resp.status_code}: {resp.text}"
+                if last_resp is None or last_resp.status_code != 200:
+                    error_msg = f"Notion Query Error {last_resp.status_code if last_resp else 'Unknown'}: {last_resp.text if last_resp else 'No response'}"
                     print(error_msg)
                     raise RuntimeError(error_msg)
-    except requests.RequestException as e:
-        print(f"Network/HTTP error checking existing Notion URLs: {e}")
-        raise RuntimeError(f"Erreur réseau lors de la vérification des doublons Notion : {e}") from e
+                
+                data = last_resp.json()
+                results = data.get("results", [])
+                for r in results:
+                    props = r.get("properties", {})
+                    url_prop = props.get(url_property_name, {})
+                    if url_prop.get("type") == "url" and url_prop.get("url"):
+                        url_val = url_prop["url"]
+                        match = re.search(r'/(\d+)', url_val)
+                        if match:
+                            existing_ids.add(match.group(1))
+
+                has_more = data.get("has_more", False)
+                if has_more:
+                    payload["start_cursor"] = data.get("next_cursor")
+    except Exception as e:
+        print(f"Error checking existing Notion URLs: {e}")
+        raise RuntimeError(f"Erreur lors de la vérification des doublons Notion : {e}") from e
         
     # Return only the IDs that were actually in our requested list
     return existing_ids.intersection(set(ids))
@@ -461,7 +482,7 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
         resp = requests.post(url, headers=headers, json=payload, timeout=15)
         if resp.status_code != 200:
             print(f"Sort Error: {resp.text}")
-            return None, None
+            raise RuntimeError(f"Notion fetch failed: {resp.status_code} {resp.text}")
             
         data = resp.json()
         results = data.get("results", [])
@@ -492,7 +513,7 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
             
     except Exception as e:
         print(f"Fongarium Fetch Error: {e}")
-        return None, None
+        raise
         
     return None, None
 
@@ -2612,14 +2633,22 @@ elif nav_mode == "📊 Tableau de Bord":
                 )
 
                 with st.spinner("Résolution en cours…"):
-                    result = enricher.batch_resolve(
-                        NOTION_TOKEN,
-                        fmt_obs_id,
-                        maps,
-                        db_props_schema=props_schema,
-                        filter_unresolved=filter_unresolved,
-                        progress_callback=_progress,
-                    )
+                    try:
+                        result = enricher.batch_resolve(
+                            NOTION_TOKEN,
+                            fmt_obs_id,
+                            maps,
+                            db_props_schema=props_schema,
+                            filter_unresolved=filter_unresolved,
+                            progress_callback=_progress,
+                        )
+                    except Exception as e:
+                        status_text.empty()
+                        progress_bar.empty()
+                        st.error(f"Une erreur fatale est survenue pendant la résolution: {e!s}")
+                        # If processLogger is not defined here, we just use print
+                        print(f"Fatal error in batch_resolve: {e!s}")
+                        st.stop()
 
                 status_text.empty()
                 progress_bar.progress(1.0)

@@ -92,7 +92,9 @@ def _query_db_all(token: str, db_id: str, session: requests.Session | None = Non
                     continue
                 raise
         
-        if last_resp is None:
+        if last_resp is None or last_resp.status_code != 200:
+            if last_resp:
+                last_resp.raise_for_status()
             raise Exception("Impossible de contacter l'API Notion après plusieurs tentatives.")
             
         data = last_resp.json()
@@ -131,23 +133,33 @@ def extract_taxon_id_from_props(props: dict) -> int | None:
 
 
 def _notion_patch_with_retry(token: str, page_id: str, properties: dict, session: requests.Session | None = None) -> requests.Response:
-    """PATCH Notion avec retry exponentiel sur 429."""
+    """PATCH Notion avec retry exponentiel sur 429 et erreurs réseau."""
     url = f"https://api.notion.com/v1/pages/{page_id}"
     requester = session if session else requests
     
+    last_resp = None
     for attempt in range(5):
-        resp = requester.patch(url, headers=_headers(token), json={"properties": properties}, timeout=30)
-        if resp.status_code != 429:
-            return resp
-        
         try:
+            resp = requester.patch(url, headers=_headers(token), json={"properties": properties}, timeout=30)
+            last_resp = resp
+            if resp.status_code not in {429, 500, 502, 503, 504}:
+                return resp
+            
             retry_after = resp.headers.get("Retry-After")
-            wait = float(retry_after) if retry_after else (2 ** attempt + 1)
-        except (ValueError, TypeError):
-            wait = 2 ** attempt + 1
-        time.sleep(wait)
-        
-    raise requests.exceptions.HTTPError(f"Échec après 5 tentatives (Status: {resp.status_code}): {resp.text}", response=resp)
+            try:
+                wait = float(retry_after) if retry_after else (2 ** attempt + random.random())
+            except (ValueError, TypeError):
+                wait = 2 ** attempt + random.random()
+            time.sleep(wait)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
+            if attempt < 4:
+                time.sleep(2 ** attempt + random.random())
+                continue
+            raise
+            
+    if last_resp:
+        raise requests.exceptions.HTTPError(f"Échec après 5 tentatives (Status: {last_resp.status_code}): {last_resp.text}", response=last_resp)
+    raise Exception("Échec PATCH après 5 tentatives pour cause d'erreurs réseau.")
 
 
 # ---------------------------------------------------------------------------
