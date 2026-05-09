@@ -14,6 +14,7 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote
 import csv_cleaner
+import enricher
 
 
 # --- SECRETS MANAGEMENT ---
@@ -39,6 +40,8 @@ if 'user_info' not in st.session_state:
     st.session_state.user_info = {} # To store full profile
 if 'props_schema' not in st.session_state:
     st.session_state.props_schema = {}
+if 'enricher_maps' not in st.session_state:
+    st.session_state.enricher_maps = None
 
 @st.cache_data(ttl=600, show_spinner="Chargement du schéma Notion...")
 def fetch_notion_schema(token, db_id):
@@ -749,7 +752,7 @@ elif nav_mode == "📊 Tableau de Bord":
         st.divider()
 
     # --- INTERFACE (Tabs) ---
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes", "📚 Explorer Notion", "🧹 Nettoyeur CSV"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes", "📚 Explorer Notion", "🧹 Nettoyeur CSV", "🔗 Relations"])
     params = {}
     run_search = False
     import_list = [] # Will hold IDs or Obs to import
@@ -2106,7 +2109,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 error_log = []
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
-                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, db_props_schema, notion_instance, fong_col_name):
+                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, db_props_schema, notion_instance, fong_col_name, enricher_maps=None):
                     """
                     Import a single iNaturalist observation into the configured Notion database as a new page.
                     
@@ -2321,14 +2324,36 @@ elif nav_mode == "📊 Tableau de Bord":
                                     warning_msg = f"⚠️ Importation réussie mais échec de la mise à jour des QR Codes pour {sci_name} (ID: {obs_id}). Erreur : {qr_err!s}"
                                     return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
 
+                        # --- ENRICHISSEMENT RELATIONS ---
+                        if enricher_maps and page_id:
+                            try:
+                                enricher.resolve_and_update_relations(
+                                    page_id,
+                                    sci_name,
+                                    description or "",
+                                    enricher_maps,
+                                    notion_instance.auth,
+                                    db_props_schema,
+                                )
+                            except Exception as enrich_err:
+                                print(f"Enrichissement ignoré pour {sci_name}: {enrich_err}")
+
                         return ({"name": sci_name, "id": obs_id, "url": p_url}, None)
 
                     except Exception as e:
                         return (None, f"{sci_name} (ID: {obs_id}) : {e!s}")
 
+                # --- CHARGEMENT DES MAPS D'ENRICHISSEMENT (une fois par session) ---
+                if st.session_state.enricher_maps is None and NOTION_TOKEN:
+                    with st.spinner("Chargement des référentiels (Mycoliste, Stations, Codes)…"):
+                        st.session_state.enricher_maps = enricher.build_lookup_maps(NOTION_TOKEN)
+                    errs = st.session_state.enricher_maps.get("_errors", [])
+                    if errs:
+                        st.warning(f"⚠️ Référentiels partiellement chargés : {', '.join(errs)}")
+
                 # --- EXECUTION WITH THREADPOOL ---
                 futures = []
-                
+
                 current_inat_val = st.session_state.get('inat_username', "")
                 real_name_val = st.session_state.get('username', "")
                 
@@ -2344,7 +2369,7 @@ elif nav_mode == "📊 Tableau de Bord":
                             error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
                             continue
                         
-                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id, import_props_schema, notion, fong_col_imp_name))
+                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id, import_props_schema, notion, fong_col_imp_name, st.session_state.enricher_maps))
 
                     total_tasks = len(futures)
                     if total_tasks > 0:
@@ -2483,3 +2508,91 @@ elif nav_mode == "📊 Tableau de Bord":
                 )
             else:
                 st.error("Erreur lors de la lecture du fichier CSV. Assurez-vous qu'il s'agit bien d'un export au format standard.")
+
+    with tab6:
+        st.header("🔗 Résolution des relations")
+        st.markdown(
+            "Cet outil résout automatiquement les relations **Espèce, Station, Habitat, Substrat** "
+            "pour les observations Notion qui n'ont pas encore été enrichies.\n\n"
+            "Utile pour corriger les observations importées avant la mise en place de ce système."
+        )
+
+        if not NOTION_TOKEN:
+            st.error("Token Notion non configuré.")
+        else:
+            # Chargement / rechargement des maps
+            col_maps, col_reset = st.columns([3, 1])
+            with col_maps:
+                if st.session_state.enricher_maps:
+                    maps = st.session_state.enricher_maps
+                    n_species  = len(maps.get("species_map", {}))
+                    n_stations = len(maps.get("station_map", {}))
+                    n_habitats = len(maps.get("habitat_codes", {}))
+                    n_substrats = len(maps.get("substrat_codes", {}))
+                    st.success(
+                        f"Référentiels chargés — "
+                        f"{n_species} taxons · {n_stations} stations · "
+                        f"{n_habitats} habitats · {n_substrats} substrats"
+                    )
+                else:
+                    st.info("Référentiels non encore chargés (ils se chargent automatiquement au premier import).")
+
+            with col_reset:
+                if st.button("🔄 Recharger les référentiels"):
+                    with st.spinner("Chargement…"):
+                        st.session_state.enricher_maps = enricher.build_lookup_maps(NOTION_TOKEN)
+                    st.rerun()
+
+            st.divider()
+
+            # Options de résolution
+            filter_unresolved = st.checkbox(
+                "Traiter uniquement les observations sans relation Espèce",
+                value=True,
+                help="Décocher pour forcer la résolution sur toutes les observations (plus long)."
+            )
+
+            if st.button("▶️ Lancer la résolution", type="primary"):
+                if st.session_state.enricher_maps is None:
+                    with st.spinner("Chargement des référentiels…"):
+                        st.session_state.enricher_maps = enricher.build_lookup_maps(NOTION_TOKEN)
+
+                maps = st.session_state.enricher_maps
+                props_schema = st.session_state.get("props_schema", {})
+
+                progress_bar = st.progress(0)
+                status_text  = st.empty()
+
+                def _progress(current, total):
+                    progress_bar.progress(current / total if total else 1)
+                    status_text.text(f"Traitement… {current}/{total}")
+
+                clean_obs_id = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
+                fmt_obs_id = (
+                    f"{clean_obs_id[:8]}-{clean_obs_id[8:12]}-{clean_obs_id[12:16]}-"
+                    f"{clean_obs_id[16:20]}-{clean_obs_id[20:]}"
+                    if len(clean_obs_id) == 32 else clean_obs_id
+                )
+
+                with st.spinner("Résolution en cours…"):
+                    result = enricher.batch_resolve(
+                        NOTION_TOKEN,
+                        fmt_obs_id,
+                        maps,
+                        db_props_schema=props_schema,
+                        filter_unresolved=filter_unresolved,
+                        progress_callback=_progress,
+                    )
+
+                status_text.empty()
+                progress_bar.progress(1.0)
+
+                st.success(
+                    f"✅ {result['success']} observations enrichies sur {result['total']} traitées "
+                    f"({result['skipped']} ignorées)."
+                )
+
+                if result["errors"]:
+                    with st.expander(f"⚠️ {len(result['errors'])} erreurs / non résolus"):
+                        for err in result["errors"]:
+                            st.write(f"- {err}")
