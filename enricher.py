@@ -85,7 +85,14 @@ def _query_db_all(token: str, db_id: str, session: requests.Session | None = Non
                 # Other errors: raise immediately
                 resp.raise_for_status()
                 
-            except (requests.exceptions.RequestException, requests.exceptions.HTTPError) as e:
+            except requests.exceptions.HTTPError as e:
+                if e.response is not None and 400 <= e.response.status_code < 500 and e.response.status_code != 429:
+                    raise
+                if attempt < 4:
+                    time.sleep(2 ** attempt + random.random())
+                    continue
+                raise
+            except requests.exceptions.RequestException as e:
                 # Retry on network errors
                 if attempt < 4:
                     time.sleep(2 ** attempt + random.random())
@@ -276,9 +283,6 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         except (requests.RequestException, KeyError, TypeError, ValueError) as e:
             errors.append(f"Substrats: {e}")
             maps["substrat_codes"] = {}
-
-    maps["_errors"] = errors
-    return maps
 
     maps["_errors"] = errors
     return maps

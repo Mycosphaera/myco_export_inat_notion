@@ -1287,14 +1287,13 @@ elif nav_mode == "📊 Tableau de Bord":
                             # Cache for Relation Names to avoid repeated API calls
                             relation_cache = {}
                             
-                            def get_relation_name(page_id, session=None):
+                            def get_relation_name(page_id):
                                 """
                                 Récupère le nom (titre) d'une page liée par relation.
                                 Utilise un cache local pour éviter les appels API redondants.
                                 
                                 Args:
                                     page_id (str): ID de la page Notion cible.
-                                    session (requests.Session, optional): Session pour réutiliser les connexions.
                                     
                                 Returns:
                                     str: Titre de la page ou 'Inconnu'/'Erreur'.
@@ -1304,10 +1303,7 @@ elif nav_mode == "📊 Tableau de Bord":
                                 
                                 try:
                                     r_url = f"https://api.notion.com/v1/pages/{page_id}"
-                                    if session:
-                                        r_resp = session.get(r_url, timeout=15)
-                                    else:
-                                        r_resp = requests.get(r_url, headers=headers, timeout=15)
+                                    r_resp = requests.get(r_url, headers=headers, timeout=15)
                                     if r_resp.status_code == 200:
                                         r_props = r_resp.json().get("properties", {})
                                         # Try to find Name/Title
@@ -1342,18 +1338,16 @@ elif nav_mode == "📊 Tableau de Bord":
                                         # 2. Pre-fetch them in parallel (skipping those already in cache)
                                         to_fetch = [uid for uid in ids_to_resolve if uid not in relation_cache]
                                         if to_fetch:
-                                            with requests.Session() as session:
-                                                session.headers.update(headers)
-                                                with ThreadPoolExecutor(max_workers=5) as executor:
-                                                    futs = {executor.submit(get_relation_name, uid, session=session): uid for uid in to_fetch}
-                                                    for fut in as_completed(futs):
-                                                        uid = futs[fut]
-                                                        try:
-                                                            fut.result()
-                                                        except Exception as e:
-                                                            print(f"Error fetching relation name for {uid}: {e}")
-                                                            # Internal error handling in get_relation_name usually returns 'Erreur'
-                                                            # but we log the unexpected exception here just in case.
+                                            with ThreadPoolExecutor(max_workers=5) as executor:
+                                                futs = {executor.submit(get_relation_name, uid): uid for uid in to_fetch}
+                                                for fut in as_completed(futs):
+                                                    uid = futs[fut]
+                                                    try:
+                                                        fut.result()
+                                                    except Exception as e:
+                                                        print(f"Error fetching relation name for {uid}: {e}")
+                                                        # Internal error handling in get_relation_name usually returns 'Erreur'
+                                                        # but we log the unexpected exception here just in case.
 
                                         # 3. Main processing loop (now extremely fast as it hits the cache)
                                         for idx, row in selected_rows.iterrows():
@@ -2383,9 +2377,10 @@ elif nav_mode == "📊 Tableau de Bord":
                                     session=session,
                                 )
                                 if not ok_enrich:
-                                    # Non-fatal warning if enrichment couldn't find a match
-                                    warning_msg = f"⚠️ Importation réussie mais enrichissement partiel pour {sci_name} (ID: {obs_id}) : {msg_enrich}"
-                                    return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
+                                    if msg_enrich != "Rien à résoudre":
+                                        # Non-fatal warning if enrichment couldn't find a match
+                                        warning_msg = f"⚠️ Importation réussie mais enrichissement partiel pour {sci_name} (ID: {obs_id}) : {msg_enrich}"
+                                        return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
                             except Exception as enrich_err:
                                 # Log as a warning but don't fail the whole import for this observation
                                 print(f"Erreur enrichissement pour {sci_name}: {enrich_err}")
