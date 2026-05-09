@@ -182,8 +182,8 @@ def get_existing_notion_ids(ids, token, db_id, props_schema=None):
                                  and "inaturalist" in k.lower()), None)
     
     if not url_property_name:
-        # Si aucune propriété URL valide n'est trouvée, on ne peut pas vérifier les doublons
-        return set()
+        # Si aucune propriété URL valide n'est trouvée, on lève une exception pour stopper l'import
+        raise RuntimeError("Impossible de vérifier les doublons : la colonne 'URL iNaturalist' est introuvable ou n'est pas de type URL dans Notion.")
     
     # Convert to tuple for caching
     all_existing_ids = _cached_check_notion_duplicates(tuple(ids), token, db_id, url_property_name)
@@ -2424,7 +2424,7 @@ elif nav_mode == "📊 Tableau de Bord":
                         return (None, f"{sci_name} (ID: {obs_id}) : {e!s}")
 
                 # --- CHARGEMENT DES MAPS D'ENRICHISSEMENT (Cache 1h) ---
-                if st.session_state.enricher_maps is None and NOTION_TOKEN:
+                if NOTION_TOKEN:
                     st.session_state.enricher_maps = cached_build_lookup_maps(NOTION_TOKEN)
                     errs = st.session_state.enricher_maps.get("_errors", [])
                     if errs:
@@ -2639,8 +2639,7 @@ elif nav_mode == "📊 Tableau de Bord":
             )
 
             if st.button("▶️ Lancer la résolution", type="primary"):
-                if st.session_state.enricher_maps is None:
-                    st.session_state.enricher_maps = cached_build_lookup_maps(NOTION_TOKEN)
+                st.session_state.enricher_maps = cached_build_lookup_maps(NOTION_TOKEN)
 
                 maps = st.session_state.enricher_maps
                 props_schema = st.session_state.get("props_schema", {})
