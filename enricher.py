@@ -81,6 +81,17 @@ def _get_rich_text(prop: dict) -> str:
     return ""
 
 
+def extract_taxon_id_from_props(props: dict) -> int | None:
+    """Extrait l'ID de taxon iNat depuis les propriétés Notion."""
+    prop = props.get(PROP_TAXON_ID, {})
+    if prop.get("type") == "number" and prop.get("number") is not None:
+        try:
+            return int(prop["number"])
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
 def _notion_patch_with_retry(token: str, page_id: str, properties: dict) -> requests.Response:
     """PATCH Notion avec retry exponentiel sur 429."""
     url = f"https://api.notion.com/v1/pages/{page_id}"
@@ -149,9 +160,9 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
                 species_map[_normalize(name)] = pid
 
             # Inat Taxon ID (number)
-            inat_id_prop = props.get(PROP_TAXON_ID, {})
-            if inat_id_prop.get("type") == "number" and inat_id_prop.get("number") is not None:
-                taxon_id_map[int(inat_id_prop["number"])] = pid
+            tid = extract_taxon_id_from_props(props)
+            if tid is not None:
+                taxon_id_map[tid] = pid
 
             # Ancien(s) Nom (rich_text) — peut contenir plusieurs noms séparés par virgule ou point-virgule
             old_name_raw = _get_rich_text(props.get("Ancien(s) Nom", {}))
@@ -164,7 +175,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         maps["species_map"]   = species_map
         maps["taxon_id_map"]  = taxon_id_map
         maps["old_names_map"] = old_names_map
-    except (requests.RequestException, KeyError, TypeError) as e:
+    except (requests.RequestException, KeyError, TypeError, ValueError) as e:
         errors.append(f"Mycoliste: {e}")
         maps["species_map"]   = {}
         maps["taxon_id_map"]  = {}
@@ -185,7 +196,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             if code:
                 station_map[code.upper()] = p["id"]
         maps["station_map"] = station_map
-    except (requests.RequestException, KeyError, TypeError) as e:
+    except (requests.RequestException, KeyError, TypeError, ValueError) as e:
         errors.append(f"Stations: {e}")
         maps["station_map"] = {}
 
@@ -198,7 +209,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             if code:
                 habitat_codes[code.upper()] = p["id"]
         maps["habitat_codes"] = habitat_codes
-    except (requests.RequestException, KeyError, TypeError) as e:
+    except (requests.RequestException, KeyError, TypeError, ValueError) as e:
         errors.append(f"Habitats: {e}")
         maps["habitat_codes"] = {}
 
@@ -211,7 +222,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             if code:
                 substrat_codes[code.upper()] = p["id"]
         maps["substrat_codes"] = substrat_codes
-    except (requests.RequestException, KeyError, TypeError) as e:
+    except (requests.RequestException, KeyError, TypeError, ValueError) as e:
         errors.append(f"Substrats: {e}")
         maps["substrat_codes"] = {}
 
@@ -460,10 +471,7 @@ def batch_resolve(
         description = _get_rich_text(desc_prop)
 
         # Récupère Inat Taxon ID (si présent)
-        taxon_id_prop = props.get(PROP_TAXON_ID, {})
-        taxon_id = None
-        if taxon_id_prop.get("type") == "number" and taxon_id_prop.get("number") is not None:
-            taxon_id = int(taxon_id_prop["number"])
+        taxon_id = extract_taxon_id_from_props(props)
 
         if not taxon_name:
             skipped += 1
