@@ -2615,7 +2615,7 @@ elif nav_mode == "📊 Tableau de Bord":
 
             with col_reset:
                 if st.button("🔄 Forcer le rafraîchissement"):
-                    st.cache_data.clear() # Clear everything to be sure
+                    cached_build_lookup_maps.clear()
                     st.session_state.enricher_maps = cached_build_lookup_maps(NOTION_TOKEN)
                     st.success("Référentiels rechargés !")
                     st.rerun()
