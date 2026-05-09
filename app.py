@@ -119,7 +119,6 @@ def get_existing_notion_ids(ids, token, db_id, props_schema=None):
                     url_prop = props.get(url_property_name, {})
                     if url_prop.get("type") == "url" and url_prop.get("url"):
                         url_val = url_prop["url"]
-                        import re
                         match = re.search(r'/(\d+)', url_val)
                         if match:
                             existing_ids.add(match.group(1))
@@ -379,7 +378,7 @@ def count_user_notion_obs(token, db_id, target_user):
             if next_cursor:
                 payload["start_cursor"] = next_cursor
             
-            resp = requests.post(url, headers=headers, json=payload)
+            resp = requests.post(url, headers=headers, json=payload, timeout=15)
             if resp.status_code != 200:
                 print(f"Error Counting: {resp.status_code} {resp.text}")
                 break
@@ -391,6 +390,9 @@ def count_user_notion_obs(token, db_id, target_user):
             has_more = data.get("has_more", False)
             next_cursor = data.get("next_cursor")
             
+    except requests.RequestException as e:
+        print(f"Network/HTTP error counting Notion observations: {e}")
+        return 0
     except Exception as e:
         print(f"Count Error: {e}")
         return 0
@@ -452,7 +454,7 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
     regex_pattern = re.compile(f"^{re.escape(prefix)}\\d+$", re.IGNORECASE)
 
     try:
-        resp = requests.post(url, headers=headers, json=payload)
+        resp = requests.post(url, headers=headers, json=payload, timeout=15)
         if resp.status_code != 200:
             print(f"Sort Error: {resp.text}")
             return None, None
@@ -885,7 +887,7 @@ elif nav_mode == "📊 Tableau de Bord":
                                     # Only need Title and ID.
                                     url_rel = f"https://api.notion.com/v1/databases/{rel_db_id}/query"
                                     # Fetch all (or first 100)
-                                    resp_rel = requests.post(url_rel, headers=headers, json={"page_size": 100})
+                                    resp_rel = requests.post(url_rel, headers=headers, json={"page_size": 100}, timeout=15)
                                     
                                     if resp_rel.status_code == 200:
                                         results_rel = resp_rel.json().get("results", [])
@@ -1276,7 +1278,7 @@ elif nav_mode == "📊 Tableau de Bord":
                                 
                                 try:
                                     r_url = f"https://api.notion.com/v1/pages/{page_id}"
-                                    r_resp = requests.get(r_url, headers=headers)
+                                    r_resp = requests.get(r_url, headers=headers, timeout=10)
                                     if r_resp.status_code == 200:
                                         r_props = r_resp.json().get("properties", {})
                                         # Try to find Name/Title
@@ -1287,7 +1289,8 @@ elif nav_mode == "📊 Tableau de Bord":
                                                 relation_cache[page_id] = name
                                                 return name
                                     return "Inconnu"
-                                except:
+                                except Exception as e:
+                                    print(f"Error fetching relation name for {page_id}: {e}")
                                     return "Erreur"
     
                             # Progress bar for resolving relations if many selected
@@ -1391,7 +1394,7 @@ elif nav_mode == "📊 Tableau de Bord":
                             # iNaturalist API v1 search
                             url = f"https://api.inaturalist.org/v1/users/autocomplete?q={new_user}&per_page=5"
                             headers = {"User-Agent": "StreamlitMycoImport/1.0 (mathieu@example.com)"}
-                            resp = requests.get(url, headers=headers)
+                            resp = requests.get(url, headers=headers, timeout=10)
                             
                             if resp.status_code == 200:
                                 data = resp.json()
