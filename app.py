@@ -1889,7 +1889,7 @@ elif nav_mode == "📊 Tableau de Bord":
             df_filtered = df_filtered[df_filtered['Date'].isin(selected_dates)]
         
         if hide_imported:
-            df_filtered = df_filtered[df_filtered['_is_new'] == True]
+            df_filtered = df_filtered[df_filtered['_is_new']]
         
         # Slice for Display (Limit)
         if selected_limit != "Tout":
@@ -2020,7 +2020,7 @@ elif nav_mode == "📊 Tableau de Bord":
         if selected_dates:
              df_filtered_fresh = df_filtered_fresh[df_filtered_fresh['Date'].isin(selected_dates)]
         if hide_imported:
-             df_filtered_fresh = df_filtered_fresh[df_filtered_fresh['_is_new'] == True]
+             df_filtered_fresh = df_filtered_fresh[df_filtered_fresh['_is_new']]
         if selected_limit != "Tout":
              df_display_fresh = df_filtered_fresh.head(int(selected_limit))
         else:
@@ -2073,7 +2073,7 @@ elif nav_mode == "📊 Tableau de Bord":
         if col_imp.button("📤 Importer vers Notion", type="primary"):
             # Filter Master, not just visible
             master_df = st.session_state.main_import_df
-            to_import_df = master_df[master_df["Import?"] == True]
+            to_import_df = master_df[master_df["Import?"]]
             
             if to_import_df.empty:
                 st.warning("Aucune observation cochée pour l'import.")
@@ -2327,6 +2327,7 @@ elif nav_mode == "📊 Tableau de Bord":
                         # --- ENRICHISSEMENT RELATIONS ---
                         if enricher_maps and page_id:
                             try:
+                                inat_taxon_id = obs_obj.get("taxon", {}).get("id")
                                 enricher.resolve_and_update_relations(
                                     page_id,
                                     sci_name,
@@ -2334,6 +2335,7 @@ elif nav_mode == "📊 Tableau de Bord":
                                     enricher_maps,
                                     notion_instance.auth,
                                     db_props_schema,
+                                    taxon_id=inat_taxon_id,
                                 )
                             except Exception as enrich_err:
                                 print(f"Enrichissement ignoré pour {sci_name}: {enrich_err}")

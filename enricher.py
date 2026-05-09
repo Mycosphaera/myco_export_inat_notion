@@ -135,16 +135,39 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
 
     # --- Mycoliste (4700+ taxons, requête paginée) ---
     try:
-        species_map: dict = {}
+        species_map: dict   = {}  # { lowercase_name → page_id }
+        taxon_id_map: dict  = {}  # { inat_taxon_id (int) → page_id }
+        old_names_map: dict = {}  # { lowercase_old_name → page_id }
+
         pages = _query_db_all(token, db_ids["mycoliste"])
         for p in pages:
-            name = _get_title(p["properties"])
+            pid   = p["id"]
+            props = p["properties"]
+            name  = _get_title(props)
             if name:
-                species_map[_normalize(name)] = p["id"]
-        maps["species_map"] = species_map
+                species_map[_normalize(name)] = pid
+
+            # Inat Taxon ID (number)
+            inat_id_prop = props.get("Inat Taxon ID", {})
+            if inat_id_prop.get("type") == "number" and inat_id_prop.get("number") is not None:
+                taxon_id_map[int(inat_id_prop["number"])] = pid
+
+            # Ancien(s) Nom (rich_text) — peut contenir plusieurs noms séparés par virgule ou point-virgule
+            old_name_raw = _get_rich_text(props.get("Ancien(s) Nom", {}))
+            if old_name_raw:
+                for part in re.split(r"[,;]", old_name_raw):
+                    part = part.strip()
+                    if part:
+                        old_names_map[_normalize(part)] = pid
+
+        maps["species_map"]   = species_map
+        maps["taxon_id_map"]  = taxon_id_map
+        maps["old_names_map"] = old_names_map
     except Exception as e:
         errors.append(f"Mycoliste: {e}")
-        maps["species_map"] = {}
+        maps["species_map"]   = {}
+        maps["taxon_id_map"]  = {}
+        maps["old_names_map"] = {}
 
     # --- Stations d'inventaire ---
     try:
@@ -248,35 +271,58 @@ def parse_description_codes(description: str, station_map: dict, habitat_codes: 
 # 3. match_species
 # ---------------------------------------------------------------------------
 
-def match_species(taxon_name: str, species_map: dict) -> str | None:
+def match_species(
+    taxon_name: str,
+    species_map: dict,
+    taxon_id: int | None = None,
+    taxon_id_map: dict | None = None,
+    old_names_map: dict | None = None,
+) -> str | None:
     """
-    3 niveaux de résolution :
-      1. Exact match lowercase        "Amanita muscaria" → OK
-      2. Strip infraspecifique        "Amanita muscaria var. muscaria" → "Amanita muscaria"
-      3. Genre + espèce seulement     "Russula cf. emetica" → "Russula emetica"
+    Résolution en 5 niveaux, du plus fiable au plus approximatif :
+
+      1. iNat Taxon ID (int)          → match garanti, ignore les synonymes
+      2. Exact match lowercase         "Amanita muscaria" → OK
+      3. Ancien(s) Nom                 "Rozites caperatus" → "Cortinarius caperatus"
+      4. Strip infraspécifique         "Amanita muscaria var. guessowii" → "Amanita muscaria"
+      5. Genre + espèce seulement      "Russula cf. emetica" → "Russula emetica"
 
     Retourne le page_id Notion ou None.
     """
-    if not taxon_name or not species_map:
+    # Tier 1 — iNat Taxon ID (le plus fiable, contourne les problèmes de synonymes)
+    if taxon_id is not None and taxon_id_map:
+        pid = taxon_id_map.get(int(taxon_id))
+        if pid:
+            return pid
+
+    if not taxon_name:
         return None
 
-    # Tier 1
+    # Tier 2 — Exact match
     key = _normalize(taxon_name)
     if key in species_map:
         return species_map[key]
 
-    # Tier 2
-    stripped = _normalize(_strip_infraspecific(taxon_name))
-    if stripped != key and stripped in species_map:
-        return species_map[stripped]
+    # Tier 3 — Ancien(s) Nom (synonymes)
+    if old_names_map and key in old_names_map:
+        return old_names_map[key]
 
-    # Tier 3 : garde uniquement les 2 premiers mots (genre + épithète)
-    # Filtrer les qualificatifs taxonomiques courants
+    # Tier 4 — Strip infraspécifique (var. / subsp. / f.)
+    stripped = _normalize(_strip_infraspecific(taxon_name))
+    if stripped != key:
+        if stripped in species_map:
+            return species_map[stripped]
+        if old_names_map and stripped in old_names_map:
+            return old_names_map[stripped]
+
+    # Tier 5 — Genre + espèce uniquement (filtre cf. / aff. / sp.)
     parts = [p for p in stripped.split() if p not in ("cf.", "aff.", "sp.", "spp.")]
     if len(parts) >= 2:
         genus_sp = f"{parts[0]} {parts[1]}"
         if genus_sp in species_map:
             return species_map[genus_sp]
+        if old_names_map and genus_sp in old_names_map:
+            return old_names_map[genus_sp]
 
     return None
 
@@ -292,6 +338,7 @@ def resolve_and_update_relations(
     maps: dict,
     token: str,
     db_props_schema: dict | None = None,
+    taxon_id: int | None = None,
 ) -> tuple[bool, str]:
     """
     Résout les relations pour une observation Notion et met à jour la page.
@@ -303,16 +350,19 @@ def resolve_and_update_relations(
       maps            — Résultat de build_lookup_maps()
       token           — Token Notion
       db_props_schema — Schéma des propriétés Notion (pour détecter le nom exact du checkbox Fongarium)
+      taxon_id        — ID numérique iNat du taxon (obs['taxon']['id']) — match prioritaire
 
     Retourne (success: bool, message: str).
     """
     species_map    = maps.get("species_map", {})
+    taxon_id_map   = maps.get("taxon_id_map", {})
+    old_names_map  = maps.get("old_names_map", {})
     station_map    = maps.get("station_map", {})
     habitat_codes  = maps.get("habitat_codes", {})
     substrat_codes = maps.get("substrat_codes", {})
 
     parsed     = parse_description_codes(description, station_map, habitat_codes, substrat_codes)
-    species_id = match_species(taxon_name, species_map)
+    species_id = match_species(taxon_name, species_map, taxon_id, taxon_id_map, old_names_map)
 
     props: dict = {}
     log: list   = []
