@@ -87,9 +87,15 @@ def _notion_patch_with_retry(token: str, page_id: str, properties: dict) -> requ
         resp = requests.patch(url, headers=_headers(token), json={"properties": properties}, timeout=30)
         if resp.status_code != 429:
             return resp
-        wait = float(resp.headers.get("Retry-After", 2 ** attempt + 1))
+        
+        try:
+            retry_after = resp.headers.get("Retry-After")
+            wait = float(retry_after) if retry_after else (2 ** attempt + 1)
+        except (ValueError, TypeError):
+            wait = 2 ** attempt + 1
         time.sleep(wait)
-    return resp
+        
+    raise requests.exceptions.HTTPError(f"Échec après 5 tentatives (Status: {resp.status_code}): {resp.text}", response=resp)
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +201,14 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
 
 def parse_description_codes(description: str, station_map: dict, habitat_codes: dict, substrat_codes: dict) -> dict:
     """
-    Tokenise Description rapide et identifie les codes connus.
+    Extrait les codes terrain préfixés par '#' depuis Description rapide.
+
+    Convention : tous les codes sont écrits avec '#' dans les Notes iNat.
+      Exemple : "#FSL01 #coll #BOM texte libre sans risque"
+
+    Seuls les tokens commençant par '#' sont interprétés — le texte libre
+    est ignoré sans risque de faux positifs.
+    Insensible à la casse : #FSL01, #fsl01, #Fsl01 sont équivalents.
 
     Retourne :
       {
@@ -215,22 +228,18 @@ def parse_description_codes(description: str, station_map: dict, habitat_codes: 
     if not description:
         return result
 
-    # On tokenise sur les espaces et on s'arrête au premier token qui n'est pas un code connu
-    # (les Notes iNat peuvent contenir du texte libre après les codes)
-    tokens = description.split()
-    all_known = set(station_map.keys()) | set(habitat_codes.keys()) | set(substrat_codes.keys()) | {"COLL"}
-
-    for token in tokens:
-        upper = token.upper()
-        if upper == "COLL":
+    for token in description.split():
+        if not token.startswith("#"):
+            continue
+        code = token[1:].upper()  # strip '#' et normaliser en majuscules
+        if code == "COLL":
             result["has_coll"] = True
-        elif upper in habitat_codes:
-            result["habitat_page_ids"].append(habitat_codes[upper])
-        elif upper in substrat_codes:
-            result["substrat_page_ids"].append(substrat_codes[upper])
-        elif upper in station_map:
-            result["station_code"] = upper
-        # Les tokens non reconnus sont ignorés (texte libre)
+        elif code in habitat_codes:
+            result["habitat_page_ids"].append(habitat_codes[code])
+        elif code in substrat_codes:
+            result["substrat_page_ids"].append(substrat_codes[code])
+        elif code in station_map:
+            result["station_code"] = code
 
     return result
 
@@ -262,7 +271,8 @@ def match_species(taxon_name: str, species_map: dict) -> str | None:
         return species_map[stripped]
 
     # Tier 3 : garde uniquement les 2 premiers mots (genre + épithète)
-    parts = stripped.split()
+    # Filtrer les qualificatifs taxonomiques courants
+    parts = [p for p in stripped.split() if p not in ("cf.", "aff.", "sp.", "spp.")]
     if len(parts) >= 2:
         genus_sp = f"{parts[0]} {parts[1]}"
         if genus_sp in species_map:
