@@ -485,18 +485,27 @@ def batch_resolve(
                     progress_callback(i + 1, total)
                 continue
 
-            ok, msg = resolve_and_update_relations(
-                page_id, taxon_name, description, maps, token, db_props_schema, 
-                taxon_id=taxon_id, session=session
-            )
-            if ok:
-                success += 1
-            else:
-                if "HTTP" in msg:
-                    errors.append(f"Page {page_id}: {msg}")
+            try:
+                ok, msg = resolve_and_update_relations(
+                    page_id, taxon_name, description, maps, token, db_props_schema, 
+                    taxon_id=taxon_id, session=session
+                )
+                if ok:
+                    success += 1
+                else:
+                    if "HTTP" in msg:
+                        errors.append(f"Page {page_id}: {msg}")
+                    skipped += 1
+            except Exception as e:
+                errors.append(f"Page {page_id} (Exception): {e}")
                 skipped += 1
 
             if progress_callback:
                 progress_callback(i + 1, total)
 
-    return {"success": success, "skipped": skipped, "errors": errors}
+    return {
+        "success": success, 
+        "skipped": skipped, 
+        "errors": errors, 
+        "total": success + skipped
+    }

@@ -1284,9 +1284,9 @@ elif nav_mode == "📊 Tableau de Bord":
                                 try:
                                     r_url = f"https://api.notion.com/v1/pages/{page_id}"
                                     if session:
-                                        r_resp = session.get(r_url)
+                                        r_resp = session.get(r_url, timeout=15)
                                     else:
-                                        r_resp = requests.get(r_url, headers=headers)
+                                        r_resp = requests.get(r_url, headers=headers, timeout=15)
                                     if r_resp.status_code == 200:
                                         r_props = r_resp.json().get("properties", {})
                                         # Try to find Name/Title
@@ -2351,7 +2351,7 @@ elif nav_mode == "📊 Tableau de Bord":
                         if enricher_maps and page_id:
                             try:
                                 inat_taxon_id = obs_obj.get("taxon", {}).get("id")
-                                enricher.resolve_and_update_relations(
+                                ok_enrich, msg_enrich = enricher.resolve_and_update_relations(
                                     page_id,
                                     sci_name,
                                     description or "",
@@ -2361,8 +2361,12 @@ elif nav_mode == "📊 Tableau de Bord":
                                     taxon_id=inat_taxon_id,
                                     session=session,
                                 )
+                                if not ok_enrich:
+                                    raise Exception(f"Échec de l'enrichissement : {msg_enrich}")
                             except Exception as enrich_err:
-                                print(f"Enrichissement ignoré pour {sci_name}: {enrich_err}")
+                                # Log and re-raise to ensure the import is marked as failed/warning
+                                print(f"Erreur enrichissement pour {sci_name}: {enrich_err}")
+                                raise Exception(f"Problème lors de la résolution taxonomique : {enrich_err}")
 
                         return ({"name": sci_name, "id": obs_id, "url": p_url}, None)
 
