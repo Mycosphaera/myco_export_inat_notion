@@ -143,9 +143,11 @@ def _cached_check_notion_duplicates(ids_tuple, token, db_id, url_property_name):
                         if has_more:
                             payload["start_cursor"] = data.get("next_cursor")
                     else:
-                        has_more = False
+                        if last_resp is not None:
+                            last_resp.raise_for_status()
+                        raise RuntimeError("Échec de la requête Notion après plusieurs tentatives.")
         except Exception as e:
-            print(f"Error in query_chunk: {e}")
+            raise e
         return chunk_existing
 
     # Notion limits 'or' filters to 100 conditions.
@@ -172,9 +174,16 @@ def get_existing_notion_ids(ids, token, db_id, props_schema=None):
     if not ids or not token or not db_id:
         return set()
     
-    url_property_name = "URL Inaturalist"
+    url_property_name = None
     if props_schema:
-        url_property_name = next((k for k, v in props_schema.items() if "url" in k.lower() and "inaturalist" in k.lower()), "URL Inaturalist")
+        # On cherche une propriété de type 'url' dont le nom contient 'inaturalist'
+        url_property_name = next((k for k, v in props_schema.items() 
+                                 if v.get("type") == "url" 
+                                 and "inaturalist" in k.lower()), None)
+    
+    if not url_property_name:
+        # Si aucune propriété URL valide n'est trouvée, on ne peut pas vérifier les doublons
+        return set()
     
     # Convert to tuple for caching
     all_existing_ids = _cached_check_notion_duplicates(tuple(ids), token, db_id, url_property_name)
@@ -2631,8 +2640,7 @@ elif nav_mode == "📊 Tableau de Bord":
 
             if st.button("▶️ Lancer la résolution", type="primary"):
                 if st.session_state.enricher_maps is None:
-                    with st.spinner("Chargement des référentiels…"):
-                        st.session_state.enricher_maps = enricher.build_lookup_maps(NOTION_TOKEN)
+                    st.session_state.enricher_maps = cached_build_lookup_maps(NOTION_TOKEN)
 
                 maps = st.session_state.enricher_maps
                 props_schema = st.session_state.get("props_schema", {})
