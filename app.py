@@ -2402,7 +2402,7 @@ elif nav_mode == "📊 Tableau de Bord":
                                     sci_name,
                                     description or "",
                                     enricher_maps,
-                                    notion_instance.auth,
+                                    NOTION_TOKEN,
                                     db_props_schema,
                                     taxon_id=inat_taxon_id,
                                     session=session,
