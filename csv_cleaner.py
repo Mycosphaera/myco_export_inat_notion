@@ -26,11 +26,15 @@ def parse_csv(uploaded_file):
     for encoding in encodings:
         try:
             uploaded_file.seek(0)
-            # Try with semicolon first (legacy priority)
-            df = pd.read_csv(uploaded_file, sep=";", dtype=str, encoding=encoding)
-            
-            # If it parsed as 1 column, fallback to comma
-            if len(df.columns) <= 1:
+            try:
+                # Try with semicolon first (legacy priority)
+                df = pd.read_csv(uploaded_file, sep=";", dtype=str, encoding=encoding)
+                # If it parsed successfully but as 1 column, it's likely a comma-separated file
+                if len(df.columns) <= 1:
+                    raise ValueError("Probable mauvais séparateur (;) car 1 seule colonne trouvée.")
+            except (pd.errors.ParserError, ValueError) as e_semi:
+                # Si le point-virgule échoue (soit parce qu'il trouve des ';' perdus plus loin, soit parce qu'il n'y a qu'une colonne),
+                # on tente avec la virgule.
                 uploaded_file.seek(0)
                 df = pd.read_csv(uploaded_file, sep=",", dtype=str, encoding=encoding)
             
