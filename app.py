@@ -14,6 +14,7 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote
 import csv_cleaner
+import enricher
 
 
 # --- SECRETS MANAGEMENT ---
@@ -39,6 +40,8 @@ if 'user_info' not in st.session_state:
     st.session_state.user_info = {} # To store full profile
 if 'props_schema' not in st.session_state:
     st.session_state.props_schema = {}
+if 'enricher_maps' not in st.session_state:
+    st.session_state.enricher_maps = None
 
 @st.cache_data(ttl=600, show_spinner="Chargement du schéma Notion...")
 def fetch_notion_schema(token, db_id):
@@ -105,32 +108,54 @@ def get_existing_notion_ids(ids, token, db_id, props_schema=None):
     }
     
     try:
-        has_more = True
-        while has_more:
-            resp = requests.post(api_url, headers=headers, json=payload, timeout=15)
-            if resp.status_code == 200:
-                data = resp.json()
+        with requests.Session() as session:
+            session.headers.update(headers)
+            has_more = True
+            while has_more:
+                last_resp = None
+                for attempt in range(5):
+                    try:
+                        resp = session.post(api_url, json=payload, timeout=15)
+                        last_resp = resp
+                        if resp.status_code == 200:
+                            break
+                        if resp.status_code == 429 or 500 <= resp.status_code < 600:
+                            retry_after = resp.headers.get("Retry-After")
+                            try:
+                                wait = float(retry_after) if retry_after else (2 ** attempt + random.random())
+                            except (ValueError, TypeError):
+                                wait = 2 ** attempt + random.random()
+                            time.sleep(wait)
+                            continue
+                        break
+                    except requests.RequestException as e:
+                        if attempt < 4:
+                            time.sleep(2 ** attempt + random.random())
+                            continue
+                        raise RuntimeError(f"Erreur réseau lors de la vérification des doublons Notion : {e}") from e
+
+                if last_resp is None or last_resp.status_code != 200:
+                    error_msg = f"Notion Query Error {last_resp.status_code if last_resp else 'Unknown'}: {last_resp.text if last_resp else 'No response'}"
+                    print(error_msg)
+                    raise RuntimeError(error_msg)
+                
+                data = last_resp.json()
                 results = data.get("results", [])
                 for r in results:
                     props = r.get("properties", {})
                     url_prop = props.get(url_property_name, {})
                     if url_prop.get("type") == "url" and url_prop.get("url"):
                         url_val = url_prop["url"]
-                        import re
                         match = re.search(r'/(\d+)', url_val)
                         if match:
                             existing_ids.add(match.group(1))
-                
+
                 has_more = data.get("has_more", False)
                 if has_more:
                     payload["start_cursor"] = data.get("next_cursor")
-            else:
-                error_msg = f"Notion Query Error {resp.status_code}: {resp.text}"
-                print(error_msg)
-                raise RuntimeError(error_msg)
-    except requests.RequestException as e:
-        print(f"Network/HTTP error checking existing Notion URLs: {e}")
-        raise RuntimeError(f"Erreur réseau lors de la vérification des doublons Notion : {e}") from e
+    except Exception as e:
+        print(f"Error checking existing Notion URLs: {e}")
+        raise RuntimeError(f"Erreur lors de la vérification des doublons Notion : {e}") from e
         
     # Return only the IDs that were actually in our requested list
     return existing_ids.intersection(set(ids))
@@ -372,22 +397,27 @@ def count_user_notion_obs(token, db_id, target_user):
     next_cursor = None
     
     try:
-        while has_more:
-            if next_cursor:
-                payload["start_cursor"] = next_cursor
-            
-            resp = requests.post(url, headers=headers, json=payload)
-            if resp.status_code != 200:
-                print(f"Error Counting: {resp.status_code} {resp.text}")
-                break
+        with requests.Session() as session:
+            session.headers.update(headers)
+            while has_more:
+                if next_cursor:
+                    payload["start_cursor"] = next_cursor
                 
-            data = resp.json()
-            results = data.get("results", [])
-            total_count += len(results)
+                resp = session.post(url, json=payload, timeout=15)
+                if resp.status_code != 200:
+                    print(f"Error Counting: {resp.status_code} {resp.text}")
+                    break
+
+                data = resp.json()
+                results = data.get("results", [])
+                total_count += len(results)
+
+                has_more = data.get("has_more", False)
+                next_cursor = data.get("next_cursor")
             
-            has_more = data.get("has_more", False)
-            next_cursor = data.get("next_cursor")
-            
+    except requests.RequestException as e:
+        print(f"Network/HTTP error counting Notion observations: {e}")
+        return 0
     except Exception as e:
         print(f"Count Error: {e}")
         return 0
@@ -449,10 +479,10 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
     regex_pattern = re.compile(f"^{re.escape(prefix)}\\d+$", re.IGNORECASE)
 
     try:
-        resp = requests.post(url, headers=headers, json=payload)
+        resp = requests.post(url, headers=headers, json=payload, timeout=15)
         if resp.status_code != 200:
             print(f"Sort Error: {resp.text}")
-            return None, None
+            raise RuntimeError(f"Notion fetch failed: {resp.status_code} {resp.text}")
             
         data = resp.json()
         results = data.get("results", [])
@@ -483,7 +513,7 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
             
     except Exception as e:
         print(f"Fongarium Fetch Error: {e}")
-        return None, None
+        raise
         
     return None, None
 
@@ -749,7 +779,7 @@ elif nav_mode == "📊 Tableau de Bord":
         st.divider()
 
     # --- INTERFACE (Tabs) ---
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes", "📚 Explorer Notion", "🧹 Nettoyeur CSV"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🔎 Recherche & Filtres (iNat Style)", "🔢 Par Liste d'IDs", "🏷️ Étiquettes", "📚 Explorer Notion", "🧹 Nettoyeur CSV", "🔗 Relations"])
     params = {}
     run_search = False
     import_list = [] # Will hold IDs or Obs to import
@@ -882,7 +912,7 @@ elif nav_mode == "📊 Tableau de Bord":
                                     # Only need Title and ID.
                                     url_rel = f"https://api.notion.com/v1/databases/{rel_db_id}/query"
                                     # Fetch all (or first 100)
-                                    resp_rel = requests.post(url_rel, headers=headers, json={"page_size": 100})
+                                    resp_rel = requests.post(url_rel, headers=headers, json={"page_size": 100}, timeout=15)
                                     
                                     if resp_rel.status_code == 200:
                                         results_rel = resp_rel.json().get("results", [])
@@ -1273,7 +1303,7 @@ elif nav_mode == "📊 Tableau de Bord":
                                 
                                 try:
                                     r_url = f"https://api.notion.com/v1/pages/{page_id}"
-                                    r_resp = requests.get(r_url, headers=headers)
+                                    r_resp = requests.get(r_url, headers=headers, timeout=15)
                                     if r_resp.status_code == 200:
                                         r_props = r_resp.json().get("properties", {})
                                         # Try to find Name/Title
@@ -1284,7 +1314,8 @@ elif nav_mode == "📊 Tableau de Bord":
                                                 relation_cache[page_id] = name
                                                 return name
                                     return "Inconnu"
-                                except:
+                                except Exception as e:
+                                    print(f"Error fetching relation name for {page_id}: {e}")
                                     return "Erreur"
     
                             # Progress bar for resolving relations if many selected
@@ -1315,7 +1346,7 @@ elif nav_mode == "📊 Tableau de Bord":
                                                         fut.result()
                                                     except Exception as e:
                                                         print(f"Error fetching relation name for {uid}: {e}")
-                                                        # Internal error handling in get_relation_name usually returns 'Erreur' 
+                                                        # Internal error handling in get_relation_name usually returns 'Erreur'
                                                         # but we log the unexpected exception here just in case.
 
                                         # 3. Main processing loop (now extremely fast as it hits the cache)
@@ -1388,7 +1419,7 @@ elif nav_mode == "📊 Tableau de Bord":
                             # iNaturalist API v1 search
                             url = f"https://api.inaturalist.org/v1/users/autocomplete?q={new_user}&per_page=5"
                             headers = {"User-Agent": "StreamlitMycoImport/1.0 (mathieu@example.com)"}
-                            resp = requests.get(url, headers=headers)
+                            resp = requests.get(url, headers=headers, timeout=10)
                             
                             if resp.status_code == 200:
                                 data = resp.json()
@@ -1886,7 +1917,7 @@ elif nav_mode == "📊 Tableau de Bord":
             df_filtered = df_filtered[df_filtered['Date'].isin(selected_dates)]
         
         if hide_imported:
-            df_filtered = df_filtered[df_filtered['_is_new'] == True]
+            df_filtered = df_filtered[df_filtered['_is_new']]
         
         # Slice for Display (Limit)
         if selected_limit != "Tout":
@@ -2017,7 +2048,7 @@ elif nav_mode == "📊 Tableau de Bord":
         if selected_dates:
              df_filtered_fresh = df_filtered_fresh[df_filtered_fresh['Date'].isin(selected_dates)]
         if hide_imported:
-             df_filtered_fresh = df_filtered_fresh[df_filtered_fresh['_is_new'] == True]
+             df_filtered_fresh = df_filtered_fresh[df_filtered_fresh['_is_new']]
         if selected_limit != "Tout":
              df_display_fresh = df_filtered_fresh.head(int(selected_limit))
         else:
@@ -2070,7 +2101,7 @@ elif nav_mode == "📊 Tableau de Bord":
         if col_imp.button("📤 Importer vers Notion", type="primary"):
             # Filter Master, not just visible
             master_df = st.session_state.main_import_df
-            to_import_df = master_df[master_df["Import?"] == True]
+            to_import_df = master_df[master_df["Import?"]]
             
             if to_import_df.empty:
                 st.warning("Aucune observation cochée pour l'import.")
@@ -2106,7 +2137,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 error_log = []
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
-                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, db_props_schema, notion_instance, fong_col_name):
+                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, db_props_schema, notion_instance, fong_col_name, enricher_maps=None, session=None):
                     """
                     Import a single iNaturalist observation into the configured Notion database as a new page.
                     
@@ -2212,6 +2243,16 @@ elif nav_mode == "📊 Tableau de Bord":
                                 else:
                                     print(f"Warning: Property '{fong_checkbox_key}' found but is not a checkbox type.")
                         
+                        # iNat Taxon ID
+                        inat_taxon_id = obs_obj.get("taxon", {}).get("id")
+                        if inat_taxon_id:
+                            taxon_id_key = next((k for k, v in db_props_schema.items() if "taxon" in k.lower() and "id" in k.lower() and v["type"] == "number"), None)
+                            if not taxon_id_key and "Inat Taxon ID" in db_props_schema:
+                                taxon_id_key = "Inat Taxon ID"
+                            
+                            if taxon_id_key:
+                                props[taxon_id_key] = {"number": int(inat_taxon_id)}
+
                         description = obs_obj.get('description', '')
                         if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
                         
@@ -2321,14 +2362,47 @@ elif nav_mode == "📊 Tableau de Bord":
                                     warning_msg = f"⚠️ Importation réussie mais échec de la mise à jour des QR Codes pour {sci_name} (ID: {obs_id}). Erreur : {qr_err!s}"
                                     return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
 
+                        # --- ENRICHISSEMENT RELATIONS ---
+                        if enricher_maps and page_id:
+                            try:
+                                inat_taxon_id = obs_obj.get("taxon", {}).get("id")
+                                ok_enrich, msg_enrich = enricher.resolve_and_update_relations(
+                                    page_id,
+                                    sci_name,
+                                    description or "",
+                                    enricher_maps,
+                                    notion_instance.auth,
+                                    db_props_schema,
+                                    taxon_id=inat_taxon_id,
+                                    session=session,
+                                )
+                                if not ok_enrich:
+                                    if msg_enrich != "Rien à résoudre":
+                                        # Non-fatal warning if enrichment couldn't find a match
+                                        warning_msg = f"⚠️ Importation réussie mais enrichissement partiel pour {sci_name} (ID: {obs_id}) : {msg_enrich}"
+                                        return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
+                            except Exception as enrich_err:
+                                # Log as a warning but don't fail the whole import for this observation
+                                print(f"Erreur enrichissement pour {sci_name}: {enrich_err}")
+                                warning_msg = f"⚠️ Importation réussie mais échec de l'enrichissement taxonomique pour {sci_name} (ID: {obs_id}). Erreur : {enrich_err!s}"
+                                return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
+
                         return ({"name": sci_name, "id": obs_id, "url": p_url}, None)
 
                     except Exception as e:
                         return (None, f"{sci_name} (ID: {obs_id}) : {e!s}")
 
+                # --- CHARGEMENT DES MAPS D'ENRICHISSEMENT (une fois par session) ---
+                if st.session_state.enricher_maps is None and NOTION_TOKEN:
+                    with st.spinner("Chargement des référentiels (Mycoliste, Stations, Codes)…"):
+                        st.session_state.enricher_maps = enricher.build_lookup_maps(NOTION_TOKEN)
+                    errs = st.session_state.enricher_maps.get("_errors", [])
+                    if errs:
+                        st.warning(f"⚠️ Référentiels partiellement chargés : {', '.join(errs)}")
+
                 # --- EXECUTION WITH THREADPOOL ---
                 futures = []
-                
+
                 current_inat_val = st.session_state.get('inat_username', "")
                 real_name_val = st.session_state.get('username', "")
                 
@@ -2336,34 +2410,38 @@ elif nav_mode == "📊 Tableau de Bord":
                 clean_id_imp = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
                 formatted_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}" if len(clean_id_imp) == 32 else clean_id_imp
 
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    for _, row in to_import_df.iterrows():
-                        obs_id = str(row["ID"])
-                        obs = obs_map.get(obs_id)
-                        if not obs:
-                            error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
-                            continue
-                        
-                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id, import_props_schema, notion, fong_col_imp_name))
-
-                    total_tasks = len(futures)
-                    if total_tasks > 0:
-                        for i, future in enumerate(as_completed(futures)):
-                            try:
-                                success_item, error_msg = future.result()
-                                if success_item:
-                                    success_log.append(success_item)
-                                if error_msg:
-                                    error_log.append(error_msg)
-                            except Exception as fut_err:
-                                error_log.append(f"Erreur système durant l'import : {fut_err!s}")
+                with requests.Session() as s:
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        for _, row in to_import_df.iterrows():
+                            obs_id = str(row["ID"])
+                            obs = obs_map.get(obs_id)
+                            if not obs:
+                                error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
+                                continue
                             
-                            # Update progress in main thread even if a task failed
-                            progress_bar.progress((i + 1) / total_tasks)
-                            status_text.text(f"Traitement en cours... ({i+1}/{total_tasks})")
-                    else:
-                        progress_bar.progress(1.0)
-                        status_text.text("Aucune observation valide à importer.")
+                            futures.append(executor.submit(
+                                import_worker, row, obs, current_inat_val, real_name_val, 
+                                formatted_db_id, import_props_schema, notion, fong_col_imp_name, 
+                                st.session_state.enricher_maps, session=s
+                            ))
+
+                        total_tasks = len(futures)
+                        if total_tasks > 0:
+                            for i, future in enumerate(as_completed(futures)):
+                                try:
+                                    success_item, error_msg = future.result()
+                                    if success_item:
+                                        success_log.append(success_item)
+                                    if error_msg:
+                                        error_log.append(error_msg)
+                                except Exception as fut_err:
+                                    error_log.append(f"Erreur système durant l'import : {fut_err!s}")
+                                
+                                progress_bar.progress((i + 1) / total_tasks)
+                                status_text.text(f"Traitement en cours... ({i+1}/{total_tasks})")
+                        else:
+                            progress_bar.progress(1.0)
+                            status_text.text("Aucune observation valide à importer.")
                 
                 status_text.empty()
                 
@@ -2396,7 +2474,7 @@ elif nav_mode == "📊 Tableau de Bord":
 
         if uploaded_file is not None:
             with st.spinner("Analyse du fichier..."):
-                df = csv_cleaner.parse_csv(uploaded_file)
+                df, error_msg = csv_cleaner.parse_csv(uploaded_file)
             
             if df is not None:
                 st.success(f"Fichier chargé avec succès ! ({len(df)} lignes)")
@@ -2482,4 +2560,100 @@ elif nav_mode == "📊 Tableau de Bord":
                     type="primary"
                 )
             else:
-                st.error("Erreur lors de la lecture du fichier CSV. Assurez-vous qu'il s'agit bien d'un export au format standard.")
+                st.error(f"Erreur lors de la lecture du fichier CSV : {error_msg}")
+
+    with tab6:
+        st.header("🔗 Résolution des relations")
+        st.markdown(
+            "Cet outil résout automatiquement les relations **Espèce, Station, Habitat, Substrat** "
+            "pour les observations Notion qui n'ont pas encore été enrichies.\n\n"
+            "Utile pour corriger les observations importées avant la mise en place de ce système."
+        )
+
+        if not NOTION_TOKEN:
+            st.error("Token Notion non configuré.")
+        else:
+            # Chargement / rechargement des maps
+            col_maps, col_reset = st.columns([3, 1])
+            with col_maps:
+                if st.session_state.enricher_maps:
+                    maps = st.session_state.enricher_maps
+                    n_species  = len(maps.get("species_map", {}))
+                    n_stations = len(maps.get("station_map", {}))
+                    n_habitats = len(maps.get("habitat_codes", {}))
+                    n_substrats = len(maps.get("substrat_codes", {}))
+                    st.success(
+                        f"Référentiels chargés — "
+                        f"{n_species} taxons · {n_stations} stations · "
+                        f"{n_habitats} habitats · {n_substrats} substrats"
+                    )
+                else:
+                    st.info("Référentiels non encore chargés (ils se chargent automatiquement au premier import).")
+
+            with col_reset:
+                if st.button("🔄 Recharger les référentiels"):
+                    with st.spinner("Chargement…"):
+                        st.session_state.enricher_maps = enricher.build_lookup_maps(NOTION_TOKEN)
+                    st.rerun()
+
+            st.divider()
+
+            # Options de résolution
+            filter_unresolved = st.checkbox(
+                "Traiter uniquement les observations sans relation Espèce",
+                value=True,
+                help="Décocher pour forcer la résolution sur toutes les observations (plus long)."
+            )
+
+            if st.button("▶️ Lancer la résolution", type="primary"):
+                if st.session_state.enricher_maps is None:
+                    with st.spinner("Chargement des référentiels…"):
+                        st.session_state.enricher_maps = enricher.build_lookup_maps(NOTION_TOKEN)
+
+                maps = st.session_state.enricher_maps
+                props_schema = st.session_state.get("props_schema", {})
+
+                progress_bar = st.progress(0)
+                status_text  = st.empty()
+
+                def _progress(current, total):
+                    progress_bar.progress(current / total if total else 1)
+                    status_text.text(f"Traitement… {current}/{total}")
+
+                clean_obs_id = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
+                fmt_obs_id = (
+                    f"{clean_obs_id[:8]}-{clean_obs_id[8:12]}-{clean_obs_id[12:16]}-"
+                    f"{clean_obs_id[16:20]}-{clean_obs_id[20:]}"
+                    if len(clean_obs_id) == 32 else clean_obs_id
+                )
+
+                with st.spinner("Résolution en cours…"):
+                    try:
+                        result = enricher.batch_resolve(
+                            NOTION_TOKEN,
+                            fmt_obs_id,
+                            maps,
+                            db_props_schema=props_schema,
+                            filter_unresolved=filter_unresolved,
+                            progress_callback=_progress,
+                        )
+                    except Exception as e:
+                        status_text.empty()
+                        progress_bar.empty()
+                        st.error(f"Une erreur fatale est survenue pendant la résolution: {e!s}")
+                        # If processLogger is not defined here, we just use print
+                        print(f"Fatal error in batch_resolve: {e!s}")
+                        st.stop()
+
+                status_text.empty()
+                progress_bar.progress(1.0)
+
+                st.success(
+                    f"✅ {result['success']} observations enrichies sur {result['total']} traitées "
+                    f"({result['skipped']} ignorées)."
+                )
+
+                if result["errors"]:
+                    with st.expander(f"⚠️ {len(result['errors'])} erreurs / non résolus"):
+                        for err in result["errors"]:
+                            st.write(f"- {err}")
