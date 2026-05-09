@@ -47,16 +47,20 @@ def _headers(token: str) -> dict:
     }
 
 
-def _query_db_all(token: str, db_id: str) -> list:
+def _query_db_all(token: str, db_id: str, session: requests.Session | None = None) -> list:
     """Requête paginée sur une DB Notion — retourne toutes les pages."""
     results = []
     cursor = None
     url = f"https://api.notion.com/v1/databases/{db_id}/query"
+    
+    # Use provided session or fallback to global requests
+    requester = session if session else requests
+    
     while True:
         body = {"page_size": 100}
         if cursor:
             body["start_cursor"] = cursor
-        resp = requests.post(url, headers=_headers(token), json=body, timeout=30)
+        resp = requester.post(url, headers=_headers(token), json=body, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         results.extend(data.get("results", []))
@@ -92,11 +96,13 @@ def extract_taxon_id_from_props(props: dict) -> int | None:
     return None
 
 
-def _notion_patch_with_retry(token: str, page_id: str, properties: dict) -> requests.Response:
+def _notion_patch_with_retry(token: str, page_id: str, properties: dict, session: requests.Session | None = None) -> requests.Response:
     """PATCH Notion avec retry exponentiel sur 429."""
     url = f"https://api.notion.com/v1/pages/{page_id}"
+    requester = session if session else requests
+    
     for attempt in range(5):
-        resp = requests.patch(url, headers=_headers(token), json={"properties": properties}, timeout=30)
+        resp = requester.patch(url, headers=_headers(token), json={"properties": properties}, timeout=30)
         if resp.status_code != 429:
             return resp
         
@@ -145,86 +151,88 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
     maps: dict = {}
     errors: list = []
 
-    # --- Mycoliste (4700+ taxons, requête paginée) ---
-    try:
-        species_map: dict   = {}  # { lowercase_name → page_id }
-        taxon_id_map: dict  = {}  # { inat_taxon_id (int) → page_id }
-        old_names_map: dict = {}  # { lowercase_old_name → page_id }
+    with requests.Session() as session:
+        # --- Mycoliste (4700+ taxons, requête paginée) ---
+        try:
+            species_map: dict   = {}  # { lowercase_name → page_id }
+            taxon_id_map: dict  = {}  # { inat_taxon_id (int) → page_id }
+            old_names_map: dict = {}  # { lowercase_old_name → page_id }
 
-        pages = _query_db_all(token, db_ids["mycoliste"])
-        for p in pages:
-            pid   = p["id"]
-            props = p["properties"]
-            name  = _get_title(props)
-            if name:
-                species_map[_normalize(name)] = pid
+            pages = _query_db_all(token, db_ids["mycoliste"], session=session)
+            for p in pages:
+                pid   = p["id"]
+                props = p["properties"]
+                name  = _get_title(props)
+                if name:
+                    species_map[_normalize(name)] = pid
 
-            # Inat Taxon ID (number)
-            tid = extract_taxon_id_from_props(props)
-            if tid is not None:
-                taxon_id_map[tid] = pid
+                # Inat Taxon ID (number)
+                tid = extract_taxon_id_from_props(props)
+                if tid is not None:
+                    taxon_id_map[tid] = pid
 
-            # Ancien(s) Nom (rich_text) — peut contenir plusieurs noms séparés par virgule ou point-virgule
-            old_name_raw = _get_rich_text(props.get("Ancien(s) Nom", {}))
-            if old_name_raw:
-                for part in re.split(r"[,;]", old_name_raw):
-                    part = part.strip()
-                    if part:
-                        old_names_map[_normalize(part)] = pid
+                # Ancien(s) Nom (rich_text)
+                old_name_raw = _get_rich_text(props.get("Ancien(s) Nom", {}))
+                if old_name_raw:
+                    for part in re.split(r"[,;]", old_name_raw):
+                        part = part.strip()
+                        if part:
+                            old_names_map[_normalize(part)] = pid
 
-        maps["species_map"]   = species_map
-        maps["taxon_id_map"]  = taxon_id_map
-        maps["old_names_map"] = old_names_map
-    except (requests.RequestException, KeyError, TypeError, ValueError) as e:
-        errors.append(f"Mycoliste: {e}")
-        maps["species_map"]   = {}
-        maps["taxon_id_map"]  = {}
-        maps["old_names_map"] = {}
+            maps["species_map"]   = species_map
+            maps["taxon_id_map"]  = taxon_id_map
+            maps["old_names_map"] = old_names_map
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+            errors.append(f"Mycoliste: {e}")
+            maps["species_map"]   = {}
+            maps["taxon_id_map"]  = {}
+            maps["old_names_map"] = {}
 
-    # --- Stations d'inventaire ---
-    try:
-        station_map: dict = {}
-        pages = _query_db_all(token, db_ids["stations"])
-        for p in pages:
-            props = p["properties"]
-            # "Code de la station" est le champ dédié (rich_text)
-            code = _get_rich_text(props.get("Code de la station", {}))
-            if not code:
-                # Fallback : le titre peut contenir le code (ex : "FSL01 — Forêt Seigneurie")
-                title = _get_title(props)
-                code = title.split()[0] if title else ""
-            if code:
-                station_map[code.upper()] = p["id"]
-        maps["station_map"] = station_map
-    except (requests.RequestException, KeyError, TypeError, ValueError) as e:
-        errors.append(f"Stations: {e}")
-        maps["station_map"] = {}
+        # --- Stations d'inventaire ---
+        try:
+            station_map: dict = {}
+            pages = _query_db_all(token, db_ids["stations"], session=session)
+            for p in pages:
+                props = p["properties"]
+                code = _get_rich_text(props.get("Code de la station", {}))
+                if not code:
+                    title = _get_title(props)
+                    code = title.split()[0] if title else ""
+                if code:
+                    station_map[code.upper()] = p["id"]
+            maps["station_map"] = station_map
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+            errors.append(f"Stations: {e}")
+            maps["station_map"] = {}
 
-    # --- Habitats (Code terrain) ---
-    try:
-        habitat_codes: dict = {}
-        pages = _query_db_all(token, db_ids["habitats"])
-        for p in pages:
-            code = _get_rich_text(p["properties"].get("Code terrain", {}))
-            if code:
-                habitat_codes[code.upper()] = p["id"]
-        maps["habitat_codes"] = habitat_codes
-    except (requests.RequestException, KeyError, TypeError, ValueError) as e:
-        errors.append(f"Habitats: {e}")
-        maps["habitat_codes"] = {}
+        # --- Habitats ---
+        try:
+            habitat_codes: dict = {}
+            pages = _query_db_all(token, db_ids["habitats"], session=session)
+            for p in pages:
+                code = _get_rich_text(p["properties"].get("Code terrain", {}))
+                if code:
+                    habitat_codes[code.upper()] = p["id"]
+            maps["habitat_codes"] = habitat_codes
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+            errors.append(f"Habitats: {e}")
+            maps["habitat_codes"] = {}
 
-    # --- Substrats (Code terrain) ---
-    try:
-        substrat_codes: dict = {}
-        pages = _query_db_all(token, db_ids["substrats"])
-        for p in pages:
-            code = _get_rich_text(p["properties"].get("Code terrain", {}))
-            if code:
-                substrat_codes[code.upper()] = p["id"]
-        maps["substrat_codes"] = substrat_codes
-    except (requests.RequestException, KeyError, TypeError, ValueError) as e:
-        errors.append(f"Substrats: {e}")
-        maps["substrat_codes"] = {}
+        # --- Substrats ---
+        try:
+            substrat_codes: dict = {}
+            pages = _query_db_all(token, db_ids["substrats"], session=session)
+            for p in pages:
+                code = _get_rich_text(p["properties"].get("Code terrain", {}))
+                if code:
+                    substrat_codes[code.upper()] = p["id"]
+            maps["substrat_codes"] = substrat_codes
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+            errors.append(f"Substrats: {e}")
+            maps["substrat_codes"] = {}
+
+    maps["_errors"] = errors
+    return maps
 
     maps["_errors"] = errors
     return maps
@@ -351,6 +359,7 @@ def resolve_and_update_relations(
     token: str,
     db_props_schema: dict | None = None,
     taxon_id: int | None = None,
+    session: requests.Session | None = None,
 ) -> tuple[bool, str]:
     """
     Résout les relations pour une observation Notion et met à jour la page.
@@ -420,7 +429,7 @@ def resolve_and_update_relations(
     if not props:
         return False, "Rien à résoudre"
 
-    resp = _notion_patch_with_retry(token, page_id, props)
+    resp = _notion_patch_with_retry(token, page_id, props, session=session)
     if resp.status_code == 200:
         return True, " | ".join(log)
     return False, f"HTTP {resp.status_code}: {resp.text[:300]}"
@@ -446,48 +455,48 @@ def batch_resolve(
 
     Retourne { "success": int, "skipped": int, "errors": list[str] }.
     """
-    pages = _query_db_all(token, obs_db_id)
-
-    if filter_unresolved:
-        pages = [
-            p for p in pages
-            if not p["properties"].get(PROP_ESPECE, {}).get("relation")
-        ]
-
-    total   = len(pages)
     success = 0
     skipped = 0
     errors  = []
 
-    for i, page in enumerate(pages):
-        page_id = page["id"]
-        props   = page["properties"]
+    with requests.Session() as session:
+        # Re-fetch pages using the session if we need to query the whole DB
+        pages = _query_db_all(token, obs_db_id, session=session)
 
-        # Récupère le nom scientifique (champ Titre)
-        taxon_name = _get_title(props)
+        if filter_unresolved:
+            pages = [
+                p for p in pages
+                if not p["properties"].get(PROP_ESPECE, {}).get("relation")
+            ]
 
-        # Récupère Description rapide
-        desc_prop = props.get("Description rapide", {})
-        description = _get_rich_text(desc_prop)
+        total = len(pages)
+        for i, page in enumerate(pages):
+            page_id = page["id"]
+            props   = page["properties"]
 
-        # Récupère Inat Taxon ID (si présent)
-        taxon_id = extract_taxon_id_from_props(props)
+            taxon_name = _get_title(props)
+            desc_prop = props.get("Description rapide", {})
+            description = _get_rich_text(desc_prop)
+            taxon_id = extract_taxon_id_from_props(props)
 
-        if not taxon_name:
-            skipped += 1
+            if not taxon_name:
+                skipped += 1
+                if progress_callback:
+                    progress_callback(i + 1, total)
+                continue
+
+            ok, msg = resolve_and_update_relations(
+                page_id, taxon_name, description, maps, token, db_props_schema, 
+                taxon_id=taxon_id, session=session
+            )
+            if ok:
+                success += 1
+            else:
+                if "HTTP" in msg:
+                    errors.append(f"Page {page_id}: {msg}")
+                skipped += 1
+
             if progress_callback:
                 progress_callback(i + 1, total)
-            continue
 
-        ok, msg = resolve_and_update_relations(
-            page_id, taxon_name, description, maps, token, db_props_schema, taxon_id=taxon_id
-        )
-        if ok:
-            success += 1
-        else:
-            errors.append(f"{taxon_name} ({page_id[:8]}…): {msg}")
-
-        if progress_callback:
-            progress_callback(i + 1, total)
-
-    return {"success": success, "skipped": skipped, "errors": errors, "total": total}
+    return {"success": success, "skipped": skipped, "errors": errors}

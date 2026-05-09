@@ -121,7 +121,6 @@ def get_existing_notion_ids(ids, token, db_id, props_schema=None):
                         url_prop = props.get(url_property_name, {})
                         if url_prop.get("type") == "url" and url_prop.get("url"):
                             url_val = url_prop["url"]
-                            import re
                             match = re.search(r'/(\d+)', url_val)
                             if match:
                                 existing_ids.add(match.group(1))
@@ -383,7 +382,7 @@ def count_user_notion_obs(token, db_id, target_user):
                 if next_cursor:
                     payload["start_cursor"] = next_cursor
                 
-                resp = session.post(url, json=payload)
+                resp = session.post(url, json=payload, timeout=15)
                 if resp.status_code != 200:
                     print(f"Error Counting: {resp.status_code} {resp.text}")
                     break
@@ -2123,7 +2122,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 error_log = []
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
-                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, db_props_schema, notion_instance, fong_col_name, enricher_maps=None):
+                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, db_props_schema, notion_instance, fong_col_name, enricher_maps=None, session=None):
                     """
                     Import a single iNaturalist observation into the configured Notion database as a new page.
                     
@@ -2360,6 +2359,7 @@ elif nav_mode == "📊 Tableau de Bord":
                                     notion_instance.auth,
                                     db_props_schema,
                                     taxon_id=inat_taxon_id,
+                                    session=session,
                                 )
                             except Exception as enrich_err:
                                 print(f"Enrichissement ignoré pour {sci_name}: {enrich_err}")
@@ -2387,34 +2387,38 @@ elif nav_mode == "📊 Tableau de Bord":
                 clean_id_imp = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
                 formatted_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}" if len(clean_id_imp) == 32 else clean_id_imp
 
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    for _, row in to_import_df.iterrows():
-                        obs_id = str(row["ID"])
-                        obs = obs_map.get(obs_id)
-                        if not obs:
-                            error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
-                            continue
-                        
-                        futures.append(executor.submit(import_worker, row, obs, current_inat_val, real_name_val, formatted_db_id, import_props_schema, notion, fong_col_imp_name, st.session_state.enricher_maps))
-
-                    total_tasks = len(futures)
-                    if total_tasks > 0:
-                        for i, future in enumerate(as_completed(futures)):
-                            try:
-                                success_item, error_msg = future.result()
-                                if success_item:
-                                    success_log.append(success_item)
-                                if error_msg:
-                                    error_log.append(error_msg)
-                            except Exception as fut_err:
-                                error_log.append(f"Erreur système durant l'import : {fut_err!s}")
+                with requests.Session() as s:
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        for _, row in to_import_df.iterrows():
+                            obs_id = str(row["ID"])
+                            obs = obs_map.get(obs_id)
+                            if not obs:
+                                error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
+                                continue
                             
-                            # Update progress in main thread even if a task failed
-                            progress_bar.progress((i + 1) / total_tasks)
-                            status_text.text(f"Traitement en cours... ({i+1}/{total_tasks})")
-                    else:
-                        progress_bar.progress(1.0)
-                        status_text.text("Aucune observation valide à importer.")
+                            futures.append(executor.submit(
+                                import_worker, row, obs, current_inat_val, real_name_val, 
+                                formatted_db_id, import_props_schema, notion, fong_col_imp_name, 
+                                st.session_state.enricher_maps, session=s
+                            ))
+
+                        total_tasks = len(futures)
+                        if total_tasks > 0:
+                            for i, future in enumerate(as_completed(futures)):
+                                try:
+                                    success_item, error_msg = future.result()
+                                    if success_item:
+                                        success_log.append(success_item)
+                                    if error_msg:
+                                        error_log.append(error_msg)
+                                except Exception as fut_err:
+                                    error_log.append(f"Erreur système durant l'import : {fut_err!s}")
+                                
+                                progress_bar.progress((i + 1) / total_tasks)
+                                status_text.text(f"Traitement en cours... ({i+1}/{total_tasks})")
+                        else:
+                            progress_bar.progress(1.0)
+                            status_text.text("Aucune observation valide à importer.")
                 
                 status_text.empty()
                 
