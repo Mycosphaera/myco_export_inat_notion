@@ -50,11 +50,17 @@ def _headers(token: str) -> dict:
     }
 
 
-def _query_db_all(token: str, db_id: str, session: requests.Session | None = None) -> list:
+def _query_db_all(token: str, db_id: str, session: requests.Session | None = None, filter_properties: list[str] | None = None) -> list:
     """Requête paginée sur une DB Notion — retourne toutes les pages avec retry robuste."""
     results = []
     cursor = None
+    
+    # URL avec filtrage de propriétés si spécifié
     url = f"https://api.notion.com/v1/databases/{db_id}/query"
+    if filter_properties:
+        params = "&".join([f"filter_properties={p}" for p in filter_properties])
+        url = f"{url}?{params}"
+        
     requester = session if session else requests
     
     while True:
@@ -215,7 +221,9 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print(f"[Notion] Chargement de Mycoliste ({db_ids['mycoliste']})...")
         start_t = time.time()
         try:
-            pages = _query_db_all(token, db_ids["mycoliste"], session=session)
+            # Optimisation: On ne récupère que Nom Latin (title), Inat Taxon ID (NmF%3F) et Ancien(s) Nom (%3C~w%5C)
+            props_to_fetch = ["title", "NmF%3F", "%3C~w%5C"]
+            pages = _query_db_all(token, db_ids["mycoliste"], session=session, filter_properties=props_to_fetch)
             s_map, t_map, o_map = {}, {}, {}
             for p in pages:
                 pid = p["id"]
@@ -239,7 +247,8 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print(f"[Notion] Chargement des Stations...")
         start_t = time.time()
         try:
-            pages = _query_db_all(token, db_ids["stations"], session=session)
+            # Optimisation: Titre (title) et Code station (v%3A~~)
+            pages = _query_db_all(token, db_ids["stations"], session=session, filter_properties=["title", "v%3A~~"])
             st_map = {}
             for p in pages:
                 props = p["properties"]
@@ -258,7 +267,8 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print(f"[Notion] Chargement des Habitats...")
         start_t = time.time()
         try:
-            pages = _query_db_all(token, db_ids["habitats"], session=session)
+            # Optimisation: Titre (title) et Code (L%5DW%40)
+            pages = _query_db_all(token, db_ids["habitats"], session=session, filter_properties=["title", "L%5DW%40"])
             h_map = {}
             for p in pages:
                 code = _get_rich_text(p["properties"].get("Code terrain", {}))
@@ -273,7 +283,8 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print(f"[Notion] Chargement des Substrats...")
         start_t = time.time()
         try:
-            pages = _query_db_all(token, db_ids["substrats"], session=session)
+            # Optimisation: Titre (title) et Code (q_lR)
+            pages = _query_db_all(token, db_ids["substrats"], session=session, filter_properties=["title", "q_lR"])
             su_map = {}
             for p in pages:
                 code = _get_rich_text(p["properties"].get("Code terrain", {}))
@@ -288,7 +299,8 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print(f"[Notion] Chargement de la Végétation...")
         start_t = time.time()
         try:
-            pages = _query_db_all(token, db_ids["vegetation"], session=session)
+            # Optimisation: Nom latin (title) et Nom français (oZxm)
+            pages = _query_db_all(token, db_ids["vegetation"], session=session, filter_properties=["title", "oZxm"])
             v_map = {}
             for p in pages:
                 name = _get_title(p["properties"])
