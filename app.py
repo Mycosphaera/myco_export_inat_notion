@@ -510,7 +510,8 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
     regex_pattern = re.compile(fr"^{re.escape(prefix)}\d+$", re.IGNORECASE)
 
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=15)
+        # Sort queries in Notion can be slow on large databases, increasing timeout to 60s
+        resp = requests.post(url, headers=headers, json=payload, timeout=60)
         if resp.status_code != 200:
             print(f"Sort Error: {resp.text}")
             raise RuntimeError(f"Notion fetch failed: {resp.status_code} {resp.text}")

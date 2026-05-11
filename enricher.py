@@ -66,7 +66,8 @@ def _query_db_all(token: str, db_id: str, session: requests.Session | None = Non
         last_resp = None
         for attempt in range(5):
             try:
-                resp = requester.post(url, headers=_headers(token), json=body, timeout=30)
+                # Increased timeout to 60s for stability with large Notion databases
+                resp = requester.post(url, headers=_headers(token), json=body, timeout=60)
                 last_resp = resp
                 
                 # Success
