@@ -26,6 +26,7 @@ DB_IDS = {
     "habitats":     "1ecb20f2-b231-805b-ba21-edc052d574f1",
     "substrats":    "1deb20f2-b231-804d-8f5d-e5d9cf67a906",
     "vegetation":   "1fdb20f2-b231-80b4-83a4-d64e12ba5c85",
+    "projets":      "34cb20f2-b231-8198-823a-000bc36fc6b3",
 }
 
 # Noms des propriétés Notion dans la DB Observations (à ajuster si renommés)
@@ -36,6 +37,7 @@ PROP_SUBSTRAT        = "Substrat"
 PROP_VEGETATION      = "Plante associée"
 PROP_FONGARIUM_CHECK = "Fongarium"
 PROP_TAXON_ID        = "Inat Taxon ID"
+PROP_PROJET          = "Projet d'inventaire"
 
 
 # ---------------------------------------------------------------------------
@@ -311,13 +313,32 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             print(f"[Notion] Erreur Végétation: {e}")
             return {"error": f"Végétation: {e}"}
 
+    def _load_projets(session):
+        print(f"[Notion] Chargement des Projets d'inventaire...")
+        start_t = time.time()
+        try:
+            pages = _query_db_all(token, db_ids["projets"], session=session)
+            p_map = {}
+            for p in pages:
+                props = p["properties"]
+                # Champ "Code" : acronyme officiel (ex: FSL, RNFCT, LT)
+                code = _get_rich_text(props.get("Code", {}))
+                if code:
+                    p_map[code.upper()] = p["id"]
+            print(f"[Notion] Projets chargés : {len(p_map)} en {time.time()-start_t:.1f}s")
+            return {"projet_map": p_map}
+        except Exception as e:
+            print(f"[Notion] Erreur Projets: {e}")
+            return {"error": f"Projets: {e}"}
+
     with requests.Session() as session:
         tasks = [
             _load_mycoliste,
             _load_stations,
             _load_habitats,
             _load_substrats,
-            _load_vegetation
+            _load_vegetation,
+            _load_projets,
         ]
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(t, session) for t in tasks]
@@ -335,12 +356,22 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
 # 2. parse_description_codes
 # ---------------------------------------------------------------------------
 
+def _extract_station_prefix(station_code: str) -> str | None:
+    """
+    Extrait le préfixe alphabétique d'un code station.
+    Ex: 'FSL01' → 'FSL', 'LT02' → 'LT', 'RNFCT01' → 'RNFCT', 'MRD-P01' → 'MRD'
+    """
+    m = re.match(r'^([A-Za-z]+)', station_code)
+    return m.group(1).upper() if m else None
+
+
 def parse_description_codes(
     description: str,
     station_map: dict,
     habitat_codes: dict,
     substrat_codes: dict,
     vegetation_map: dict = None,
+    projet_map: dict = None,
 ) -> dict:
     """
     Extrait les codes terrain préfixés par '#' depuis Description rapide.
@@ -352,17 +383,22 @@ def parse_description_codes(
     est ignoré sans risque de faux positifs.
     Insensible à la casse : #FSL01, #fsl01, #Fsl01 sont équivalents.
 
+    Le projet est déduit automatiquement du préfixe alphabétique du code station
+    (ex: FSL01 → préfixe FSL → Projet "Forêt Seigneurie Lotbinière").
+
     Retourne :
       {
-        "station_code"      : str | None,
-        "has_coll"          : bool,
-        "habitat_page_ids"  : list[str],
-        "substrat_page_ids" : list[str],
+        "station_code"       : str | None,
+        "projet_page_id"     : str | None,   ← déduit du préfixe station
+        "has_coll"           : bool,
+        "habitat_page_ids"   : list[str],
+        "substrat_page_ids"  : list[str],
         "vegetation_page_ids": list[str],
       }
     """
     result = {
         "station_code": None,
+        "projet_page_id": None,
         "has_coll": False,
         "habitat_page_ids": [],
         "substrat_page_ids": [],
@@ -384,14 +420,15 @@ def parse_description_codes(
             result["substrat_page_ids"].append(substrat_codes[code])
         elif code in station_map:
             result["station_code"] = code
+            # Déduire le projet depuis le préfixe alphabétique
+            if projet_map:
+                prefix = _extract_station_prefix(code)
+                if prefix and prefix in projet_map:
+                    result["projet_page_id"] = projet_map[prefix]
         elif vegetation_map:
-            # Match dynamique sur le nom normalisé de la plante
-            # (Ex: #Abies_balsamea -> match "abies balsamea")
             norm_code = code.replace("_", " ").lower()
             if norm_code in vegetation_map:
                 result["vegetation_page_ids"].append(vegetation_map[norm_code])
-        # On pourrait ajouter un préfixe spécifique pour la végétation si besoin, ex: #V_EPIN_NOIRE
-        # Pour l'instant on ne fait que les types explicites connus.
 
     return result
 
@@ -491,8 +528,9 @@ def resolve_and_update_relations(
     habitat_codes  = maps.get("habitat_codes", {})
     substrat_codes = maps.get("substrat_codes", {})
     vegetation_map = maps.get("vegetation_map", {})
+    projet_map     = maps.get("projet_map", {})
 
-    parsed     = parse_description_codes(description, station_map, habitat_codes, substrat_codes, vegetation_map)
+    parsed     = parse_description_codes(description, station_map, habitat_codes, substrat_codes, vegetation_map, projet_map)
     species_id = match_species(taxon_name, species_map, taxon_id, taxon_id_map, old_names_map)
 
     props: dict = {}
@@ -513,6 +551,12 @@ def resolve_and_update_relations(
             log.append(f"Station→{parsed['station_code']}")
         else:
             log.append(f"Station non trouvée ({parsed['station_code']})")
+
+    # Projet d'inventaire (déduit du préfixe de la station)
+    if parsed.get("projet_page_id"):
+        props[PROP_PROJET] = {"relation": [{"id": parsed["projet_page_id"]}]}
+        prefix = _extract_station_prefix(parsed["station_code"]) if parsed["station_code"] else "?"
+        log.append(f"Projet→{prefix}")
 
     # Fongarium checkbox ("coll")
     if parsed["has_coll"]:
