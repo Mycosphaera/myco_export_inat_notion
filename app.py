@@ -403,7 +403,7 @@ def count_user_notion_obs(token, db_id, target_user):
     """
     if not token or not db_id or not target_user: return 0
     
-    url = f"https://api.notion.com/v1/databases/{db_id}/query"
+    url = f"https://api.notion.com/v1/databases/{db_id}/query?filter_properties=title"
     headers = {
         "Authorization": f"Bearer {token}",
         "Notion-Version": "2022-06-28",
@@ -434,7 +434,7 @@ def count_user_notion_obs(token, db_id, target_user):
                 if next_cursor:
                     payload["start_cursor"] = next_cursor
                 
-                resp = session.post(url, json=payload, timeout=15)
+                resp = session.post(url, json=payload, timeout=60)
                 if resp.status_code != 200:
                     print(f"Error Counting: {resp.status_code} {resp.text}")
                     break
@@ -597,7 +597,7 @@ def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
                 query_payload["start_cursor"] = next_cursor
             
             try:
-                resp_query = session.post(api_url_query, json=query_payload, timeout=15)
+                resp_query = session.post(api_url_query, json=query_payload, timeout=60)
                 resp_query.raise_for_status()
                 
                 data = resp_query.json()
