@@ -420,6 +420,7 @@ def parse_description_codes(
             result["substrat_page_ids"].append(substrat_codes[code])
         elif code in station_map:
             result["station_code"] = code
+            result["projet_page_id"] = None  # Réinitialise systématiquement avant déduction
             # Déduire le projet depuis le préfixe alphabétique
             if projet_map:
                 prefix = _extract_station_prefix(code)
@@ -554,9 +555,11 @@ def resolve_and_update_relations(
 
     # Projet d'inventaire (déduit du préfixe de la station)
     if parsed.get("projet_page_id"):
-        props[PROP_PROJET] = {"relation": [{"id": parsed["projet_page_id"]}]}
-        prefix = _extract_station_prefix(parsed["station_code"]) if parsed["station_code"] else "?"
-        log.append(f"Projet→{prefix}")
+        # On vérifie que la propriété existe dans le schéma de la DB avant d'assigner
+        if not db_props_schema or PROP_PROJET in db_props_schema:
+            props[PROP_PROJET] = {"relation": [{"id": parsed["projet_page_id"]}]}
+            prefix = _extract_station_prefix(parsed["station_code"]) if parsed["station_code"] else "?"
+            log.append(f"Projet→{prefix}")
 
     # Fongarium checkbox ("coll")
     if parsed["has_coll"]:
