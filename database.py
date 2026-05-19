@@ -51,19 +51,30 @@ def get_user_by_email(email):
         print(f"Erreur DB (get_user): {e}")
         return None
 
-def create_user_profile(email, notion_name, inat_username):
+def create_user_profile(email, notion_name, inat_username, notion_portail_page_id=None):
     """
     Crée un nouveau profil utilisateur.
+
+    Args:
+        email: identifiant unique (email)
+        notion_name: nom affiché dans la colonne Mycologue (select) de la BD Observations
+        inat_username: login iNaturalist
+        notion_portail_page_id: ID Notion de la page Portail du mycologue de l'utilisateur
+            (utilisé pour remplir la colonne `Mycologue (relation)` à l'import).
+            Obligatoire pour les nouveaux signups, mais accepté comme None pour
+            les chemins de code legacy ou les tests.
     """
     if not supabase:
         return False
-    
+
     new_user = {
         "auth_username": email,       # On utilise l'email comme identifiant unique
         "notion_user_name": notion_name, # CORRECTION: Nom de colonne réel
         "inat_username": inat_username,
         "password": "NO_PASSWORD"     # Champ technique rempli par défaut
     }
+    if notion_portail_page_id:
+        new_user["notion_portail_page_id"] = notion_portail_page_id
     
     try:
         response = supabase.table("user_profiles").insert(new_user).execute()

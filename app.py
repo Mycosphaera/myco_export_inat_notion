@@ -18,15 +18,55 @@ import enricher
 
 
 # --- SECRETS MANAGEMENT ---
+def _get_notion_secret(*keys):
+    """
+    Lookup d'une clé secret dans st.secrets["notion"] OU à la racine.
+    Permet d'utiliser soit [notion]\\ntoken="...", soit NOTION_TOKEN="..." à la racine
+    (utile pour Streamlit Cloud qui supporte les deux conventions).
+    """
+    try:
+        section = st.secrets.get("notion", {})
+    except Exception:
+        section = {}
+    for k in keys:
+        if k in section and section[k]:
+            return section[k]
+    for k in keys:
+        try:
+            if k in st.secrets and st.secrets[k]:
+                return st.secrets[k]
+        except Exception:
+            continue
+    return None
+
+
 try:
-    notional = st.secrets.get("notion", {})
-    NOTION_TOKEN = notional.get("token") or st.secrets.get("NOTION_TOKEN")
-    DATABASE_ID = notional.get("database_id") or st.secrets.get("DATABASE_ID")
+    NOTION_TOKEN = _get_notion_secret("token", "NOTION_TOKEN")
+    DATABASE_ID  = _get_notion_secret("database_id", "DATABASE_ID")
+
+    # IDs des BDs Notion supplémentaires (Mycoliste, Stations, Habitats, Substrats,
+    # Plantes du Québec, Projets, Portail du mycologue). Chargés depuis la config
+    # plutôt que hardcodés : le projet est open source, chaque déploiement aura
+    # son propre workspace Notion.
+    NOTION_DB_IDS = {
+        "mycoliste":  _get_notion_secret("mycoliste_db_id",  "MYCOLISTE_DB_ID")  or "",
+        "stations":   _get_notion_secret("stations_db_id",   "STATIONS_DB_ID")   or "",
+        "habitats":   _get_notion_secret("habitats_db_id",   "HABITATS_DB_ID")   or "",
+        "substrats":  _get_notion_secret("substrats_db_id",  "SUBSTRATS_DB_ID")  or "",
+        "vegetation": _get_notion_secret("vegetation_db_id", "VEGETATION_DB_ID") or "",
+        "projets":    _get_notion_secret("projets_db_id",    "PROJETS_DB_ID")    or "",
+    }
+    PORTAIL_MYCOLOGUE_DB_ID = _get_notion_secret(
+        "portail_mycologue_db_id", "PORTAIL_MYCOLOGUE_DB_ID",
+    ) or ""
+
     has_secrets = bool(NOTION_TOKEN and DATABASE_ID)
 except Exception:
     has_secrets = False
     NOTION_TOKEN = None
     DATABASE_ID = None
+    NOTION_DB_IDS = {}
+    PORTAIL_MYCOLOGUE_DB_ID = ""
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Portail Myco", layout="wide")
@@ -163,8 +203,12 @@ def _cached_check_notion_duplicates(ids_tuple, token, db_id, url_property_name):
 
 @st.cache_data(ttl=3600, show_spinner="Chargement des référentiels taxonomiques...")
 def cached_build_lookup_maps(token):
-    """Charge et met en cache les référentiels Mycoliste, Stations, etc."""
-    return enricher.build_lookup_maps(token)
+    """Charge et met en cache les référentiels Mycoliste, Stations, etc.
+
+    Les IDs des BDs Notion sont passés depuis la config (st.secrets) plutôt
+    que hardcodés — voir NOTION_DB_IDS plus haut.
+    """
+    return enricher.build_lookup_maps(token, db_ids=NOTION_DB_IDS)
 
 
 def get_existing_notion_ids(ids, token, db_id, props_schema=None):
@@ -195,29 +239,126 @@ def get_existing_notion_ids(ids, token, db_id, props_schema=None):
 def get_notion_mycologists():
     """
     Récupère la liste des options de la propriété 'Mycologue' dans la base Notion.
-    
+
     Returns:
         list: Une liste triée des noms de mycologues disponibles.
     """
     try:
         if not has_secrets: return []
         props = fetch_notion_schema(NOTION_TOKEN, DATABASE_ID)
-        
+
         # On cherche la colonne "Mycologue" (Select ou Multi-select)
         # On utilise une recherche insensible à la casse pour plus de robustesse
         myco_key = next((k for k in props if "mycologue" in k.lower()), "Mycologue")
         myco_prop = props.get(myco_key, {})
         options = []
-        
+
         if myco_prop.get("type") == "select":
             options = [opt["name"] for opt in myco_prop.get("select", {}).get("options", [])]
         elif myco_prop.get("type") == "multi_select":
             options = [opt["name"] for opt in myco_prop.get("multi_select", {}).get("options", [])]
-            
+
         return sorted(options)
     except Exception as e:
         print(f"Erreur Retrieve Notion Schema: {e}")
         return []
+
+
+@st.cache_data(ttl=3600, show_spinner="Chargement des mycologues du Portail Notion...")
+def fetch_portail_pages(token):
+    """
+    Charge toutes les pages de la BD "Portail du mycologue" sur Notion.
+
+    Retour : liste de dicts triée par Nom complet, chacun avec :
+      - page_id       : str (UUID Notion)
+      - nom_complet   : str (titre de la page)
+      - inat_login    : str (champ "Inaturalist (nom d'utilisateur)" ou "")
+      - alias         : str (champ "Alias dans la BD Observations" ou "")
+      - label         : str (texte affichable, ex: "Mathias Rocheleau-Duplain (iNat: mycosystema)")
+
+    Utilisé pour :
+      1. Le dropdown de sélection à la création de profil Streamlit
+      2. Le popup de migration pour les utilisateurs existants
+      3. Le lookup futur par login iNat pour les imports admin (autre user)
+    """
+    if not token or not PORTAIL_MYCOLOGUE_DB_ID:
+        return []
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+    }
+    url = f"https://api.notion.com/v1/databases/{PORTAIL_MYCOLOGUE_DB_ID}/query"
+    results = []
+    cursor = None
+
+    try:
+        while True:
+            body = {"page_size": 100}
+            if cursor:
+                body["start_cursor"] = cursor
+            resp = requests.post(url, headers=headers, json=body, timeout=60)
+            if resp.status_code != 200:
+                print(f"[Portail] HTTP {resp.status_code}: {resp.text[:200]}")
+                break
+            data = resp.json()
+            for p in data.get("results", []):
+                props = p.get("properties", {})
+                # Nom complet (title)
+                nom = ""
+                for v in props.values():
+                    if v.get("type") == "title" and v.get("title"):
+                        nom = v["title"][0].get("plain_text", "").strip()
+                        break
+                # iNat username (rich_text)
+                inat = ""
+                inat_prop = props.get("Inaturalist (nom d'utilisateur)", {})
+                if inat_prop.get("type") == "rich_text" and inat_prop.get("rich_text"):
+                    inat = inat_prop["rich_text"][0].get("plain_text", "").strip()
+                # Alias (rich_text)
+                alias = ""
+                alias_prop = props.get("Alias dans la BD Observations", {})
+                if alias_prop.get("type") == "rich_text" and alias_prop.get("rich_text"):
+                    alias = alias_prop["rich_text"][0].get("plain_text", "").strip()
+                if not nom:
+                    continue
+                label = nom
+                if inat:
+                    label += f" (iNat: {inat})"
+                elif alias and alias != nom:
+                    label += f" (alias: {alias})"
+                results.append({
+                    "page_id": p["id"],
+                    "nom_complet": nom,
+                    "inat_login": inat,
+                    "alias": alias,
+                    "label": label,
+                })
+            if not data.get("has_more"):
+                break
+            cursor = data.get("next_cursor")
+    except Exception as e:
+        print(f"[Portail] Erreur fetch_portail_pages: {e}")
+        return []
+
+    results.sort(key=lambda r: r["nom_complet"].lower())
+    return results
+
+
+def find_portail_page_by_inat(token, inat_login):
+    """
+    Recherche une page Portail du mycologue par login iNat (insensible à la casse).
+    Retourne le dict de la page ou None.
+    Utilise le cache de fetch_portail_pages().
+    """
+    if not inat_login:
+        return None
+    target = inat_login.lower().strip()
+    for p in fetch_portail_pages(token):
+        if p["inat_login"].lower() == target:
+            return p
+    return None
 
 # --- 3. FONCTION DE LOGIN / PORTAIL ---
 def login_page():
@@ -285,36 +426,72 @@ def login_page():
             elif st.session_state.reg_step == 2:
                 st.write("#### Étape 2 : Création du Profil")
                 st.success(f"✅ Email : {st.session_state.reg_email}")
-                
+
                 # Fetch Notion Mycologists List (Try, default to empty)
                 myco_options = get_notion_mycologists()
-                
+                # Fetch Portail du mycologue pages (pour la relation Notion)
+                portail_pages = fetch_portail_pages(NOTION_TOKEN) if has_secrets else []
+
                 with st.form("create_profile_form"):
                     # Email est pré-rempli et verrouillé (puisque validé)
                     st.text_input("Votre Email", value=st.session_state.reg_email, disabled=True)
-                    
+
                     # Fallback Logic: Si la liste est vide (erreur ou pas de droits), on met un champ texte libre
                     if myco_options:
                         reg_notion_name = st.selectbox("Votre Nom sur Notion (Mycologue)", options=myco_options)
                     else:
                         st.warning("⚠️ Impossible de charger la liste Notion (droits insuffisants ?). Entrez votre nom manuellement.")
                         reg_notion_name = st.text_input("Votre Nom sur Notion (Mycologue)")
-                    
+
                     reg_inat = st.text_input("Votre Nom d'utilisateur iNaturalist")
-                    
+
+                    # Sélection de la page Portail du mycologue (obligatoire)
+                    st.markdown("**Votre page Portail du mycologue sur Notion**")
+                    st.caption(
+                        "Cette page sera liée à chacune de vos observations importées "
+                        "(colonne `Mycologue (relation)` dans la BD Observations). "
+                        "Ta page existe probablement déjà — choisis-la dans la liste."
+                    )
+                    reg_portail_page_id = None
+                    if portail_pages:
+                        # On passe les dicts complets en options + format_func pour l'affichage —
+                        # ainsi 2 pages avec un label identique restent des objets distincts
+                        # et le retour de selectbox donne directement le bon page_id.
+                        portail_options = [None] + portail_pages
+                        portail_choice = st.selectbox(
+                            "Sélectionne ta page",
+                            options=portail_options,
+                            format_func=lambda p: "— Sélectionne ta page —" if p is None else p["label"],
+                            key="reg_portail_select",
+                        )
+                        if portail_choice is not None:
+                            reg_portail_page_id = portail_choice["page_id"]
+                    else:
+                        st.warning(
+                            "⚠️ Impossible de charger les pages du Portail Notion. "
+                            "Tu pourras configurer cette liaison plus tard depuis ton profil."
+                        )
+
                     if st.form_submit_button("Finaliser mon portail"):
                         if not reg_inat or not reg_notion_name:
                             st.warning("Tout remplir SVP.")
+                        elif portail_pages and not reg_portail_page_id:
+                            st.warning("Sélectionne ta page Portail du mycologue dans la liste.")
                         else:
                             # On utilise reg_email du state
-                            success = create_user_profile(st.session_state.reg_email, reg_notion_name, reg_inat)
+                            success = create_user_profile(
+                                st.session_state.reg_email,
+                                reg_notion_name,
+                                reg_inat,
+                                notion_portail_page_id=reg_portail_page_id,
+                            )
                             if success:
                                 st.balloons()
                                 st.success("Portail créé ! Vous pouvez maintenant vous connecter.")
                                 st.session_state.reg_step = 1 # Reset
                             else:
                                 st.error("Erreur technique.")
-                
+
                 if st.button("Retour"):
                     st.session_state.reg_step = 1
                     st.rerun()
@@ -323,6 +500,92 @@ def login_page():
 if not st.session_state.authenticated:
     login_page()
     st.stop() # ⛔ ARRÊT IMMÉDIAT du script ici si pas connecté
+
+
+def portail_setup_gate():
+    """
+    Bloque l'accès à l'app tant que l'utilisateur n'a pas configuré
+    sa page Portail du mycologue (Notion). Migration progressive : tous les
+    utilisateurs existants doivent passer par cet écran à leur prochaine connexion.
+    """
+    user_info = st.session_state.get("user_info", {}) or {}
+    if user_info.get("notion_portail_page_id"):
+        return  # déjà configuré, accès normal
+
+    st.markdown("""
+    <h2 style='text-align: center; color: #2E8B57;'>🔗 Une dernière étape</h2>
+    <p style='text-align: center;'>
+        On a ajouté une nouvelle fonctionnalité : chaque observation importée
+        est automatiquement liée à <strong>ta page Portail du mycologue sur Notion</strong>
+        via la colonne <code>Mycologue (relation)</code>.
+    </p>
+    <p style='text-align: center;'>
+        Pour activer ça, sélectionne ta page Portail ci-dessous (configuration unique).
+    </p>
+    """, unsafe_allow_html=True)
+
+    portail_pages = fetch_portail_pages(NOTION_TOKEN) if has_secrets else []
+    if not portail_pages:
+        st.error(
+            "⚠️ Impossible de charger les pages du Portail Notion. "
+            "Vérifie ta connexion ou contacte l'admin."
+        )
+        st.stop()
+
+    # Pré-sélection automatique : si on trouve la page par login iNat, on la propose en défaut
+    inat_login = (user_info.get("inat_username") or "").lower().strip()
+    default_idx = 0
+    if inat_login:
+        for i, p in enumerate(portail_pages):
+            if p["inat_login"].lower() == inat_login:
+                default_idx = i + 1  # +1 car le placeholder est à l'index 0
+                break
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        with st.form("portail_setup_form"):
+            # On passe les dicts complets en options + format_func — évite la collision
+            # si 2 pages partagent le même label (ex: deux mycologues prénommés "Véronique").
+            options = [None] + portail_pages
+            choice = st.selectbox(
+                "Ta page Portail du mycologue",
+                options=options,
+                index=default_idx,
+                format_func=lambda p: "— Sélectionne ta page —" if p is None else p["label"],
+                key="setup_portail_select",
+            )
+            confirm = st.form_submit_button("Lier ma page et continuer", type="primary")
+            if confirm:
+                if choice is None:
+                    st.warning("Sélectionne ta page dans la liste avant de continuer.")
+                else:
+                    selected = choice
+                    user_id = user_info.get("id")
+                    if not user_id:
+                        st.error("Profil utilisateur incomplet — impossible de mettre à jour.")
+                        st.stop()
+                    res = update_user_profile(
+                        user_id,
+                        {"notion_portail_page_id": selected["page_id"]},
+                    )
+                    if res is True:
+                        # Refresh user_info en mémoire pour éviter une re-boucle
+                        st.session_state.user_info["notion_portail_page_id"] = selected["page_id"]
+                        st.success(f"✅ Page liée : {selected['nom_complet']}")
+                        st.rerun()
+                    else:
+                        st.error(f"Erreur lors de l'enregistrement : {res}")
+
+        st.caption(
+            "Cette étape est obligatoire pour les utilisateurs existants — "
+            "à terme la colonne `Mycologue (select)` sera supprimée au profit "
+            "de la relation."
+        )
+
+    st.stop()  # Bloque tout ce qui suit tant que pas configuré
+
+
+portail_setup_gate()
 
 # =========================================================
 # 🏰 BIENVENUE DANS LA CITADELLE (Ton App commence ici)
@@ -2169,10 +2432,10 @@ elif nav_mode == "📊 Tableau de Bord":
                 error_log = []
                 
                 # --- WORKER FUNCTION FOR MULTI-THREADING ---
-                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, db_props_schema, notion_instance, fong_col_name, enricher_maps=None, session=None):
+                def import_worker(row, obs_obj, current_inat, real_name_notion, fmt_db_id, db_props_schema, notion_instance, fong_col_name, enricher_maps=None, session=None, current_user_portail_page_id=None):
                     """
                     Import a single iNaturalist observation into the configured Notion database as a new page.
-                    
+
                     Parameters:
                         row (Mapping): A row from the import dataframe containing at least "Taxon", "ID", and "No° Fongarium".
                         obs_obj (Mapping): The full iNaturalist observation object used to populate Notion properties (user, dates, photos, location, description, uri, tags, etc.).
@@ -2182,12 +2445,13 @@ elif nav_mode == "📊 Tableau de Bord":
                         db_props_schema (dict): Notion database properties schema for dynamic key detection.
                         notion_instance (Client): Authenticated Notion Client instance.
                         fong_col_name (str): The name of the Notion property for Fongarium code.
-                    
+                        current_user_portail_page_id (str | None): Notion page ID of the current user's "Portail du mycologue" entry. When the observation's iNat user matches the current Streamlit user, this is used to populate the "Mycologue (relation)" column.
+
                     Returns:
                         tuple:
                             - success (dict | None): If successful, a dict with keys "name" (scientific name), "id" (iNaturalist observation id), and "url" (Notion page url); otherwise None.
                             - error_or_warning (str | None): If the import failed, an error message; if the import succeeded but QR code update failed, a warning message; otherwise None.
-                    
+
                     Side effects:
                         - Creates a new page in Notion with mapped properties, optional photo children blocks, and attempts to update QR code file properties.
                     """
@@ -2202,7 +2466,8 @@ elif nav_mode == "📊 Tableau de Bord":
                         # --- DATA EXTRACTION & MAPPING ---
                         inat_login = obs_obj.get('user', {}).get('login') or "Inconnu"
                         user_name = inat_login
-                        if current_inat and inat_login.lower() == current_inat.lower():
+                        is_self_import = bool(current_inat) and inat_login.lower() == current_inat.lower()
+                        if is_self_import:
                             if real_name_notion:
                                 user_name = real_name_notion
 
@@ -2253,6 +2518,19 @@ elif nav_mode == "📊 Tableau de Bord":
                         }
                         if date_iso: props["Date"] = {"date": {"start": date_iso}}
                         if user_name: props["Mycologue"] = {"select": {"name": user_name}}
+                        # Mycologue (relation) — uniquement pour self-import et si page_id configuré
+                        if is_self_import and current_user_portail_page_id:
+                            # Détecter dynamiquement le nom exact dans le schéma de la BD.
+                            # Si aucune colonne relation Mycologue n'existe, on skip plutôt
+                            # que de défauter sur un nom hardcodé qui ferait rejeter la page
+                            # par Notion (400 "is not a property that exists").
+                            relation_key = next(
+                                (k for k, v in db_props_schema.items()
+                                 if "mycologue" in k.lower() and "relation" in k.lower() and v.get("type") == "relation"),
+                                None,
+                            )
+                            if relation_key:
+                                props[relation_key] = {"relation": [{"id": current_user_portail_page_id}]}
                         if obs_url: props["URL Inaturalist"] = {"url": obs_url}
                         if photo_files_payload: props["Photo macro"] = {"files": photo_files_payload}
                         
@@ -2436,7 +2714,17 @@ elif nav_mode == "📊 Tableau de Bord":
 
                 current_inat_val = st.session_state.get('inat_username', "")
                 real_name_val = st.session_state.get('username', "")
-                
+                current_portail_page_id = (st.session_state.get('user_info') or {}).get('notion_portail_page_id')
+
+                # Filet de sécurité : ne pas importer si le user n'a pas configuré sa page Portail.
+                # En théorie le portail_setup_gate() bloque déjà l'accès — c'est une double protection.
+                if not current_portail_page_id:
+                    st.error(
+                        "Tu n'as pas encore lié ta page Portail du mycologue. "
+                        "Va dans ton profil pour la configurer avant d'importer."
+                    )
+                    st.stop()
+
                 # Pre-calculate formatted Database ID once
                 clean_id_imp = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
                 formatted_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}" if len(clean_id_imp) == 32 else clean_id_imp
@@ -2449,11 +2737,12 @@ elif nav_mode == "📊 Tableau de Bord":
                             if not obs:
                                 error_log.append(f"{row['Taxon']} (ID: {obs_id}) : Données iNat introuvables (obs_map)")
                                 continue
-                            
+
                             futures.append(executor.submit(
-                                import_worker, row, obs, current_inat_val, real_name_val, 
-                                formatted_db_id, import_props_schema, notion, fong_col_imp_name, 
-                                st.session_state.enricher_maps, session=s
+                                import_worker, row, obs, current_inat_val, real_name_val,
+                                formatted_db_id, import_props_schema, notion, fong_col_imp_name,
+                                st.session_state.enricher_maps, session=s,
+                                current_user_portail_page_id=current_portail_page_id,
                             ))
 
                         total_tasks = len(futures)
