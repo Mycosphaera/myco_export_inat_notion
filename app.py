@@ -18,15 +18,55 @@ import enricher
 
 
 # --- SECRETS MANAGEMENT ---
+def _get_notion_secret(*keys):
+    """
+    Lookup d'une clé secret dans st.secrets["notion"] OU à la racine.
+    Permet d'utiliser soit [notion]\\ntoken="...", soit NOTION_TOKEN="..." à la racine
+    (utile pour Streamlit Cloud qui supporte les deux conventions).
+    """
+    try:
+        section = st.secrets.get("notion", {})
+    except Exception:
+        section = {}
+    for k in keys:
+        if k in section and section[k]:
+            return section[k]
+    for k in keys:
+        try:
+            if k in st.secrets and st.secrets[k]:
+                return st.secrets[k]
+        except Exception:
+            continue
+    return None
+
+
 try:
-    notional = st.secrets.get("notion", {})
-    NOTION_TOKEN = notional.get("token") or st.secrets.get("NOTION_TOKEN")
-    DATABASE_ID = notional.get("database_id") or st.secrets.get("DATABASE_ID")
+    NOTION_TOKEN = _get_notion_secret("token", "NOTION_TOKEN")
+    DATABASE_ID  = _get_notion_secret("database_id", "DATABASE_ID")
+
+    # IDs des BDs Notion supplémentaires (Mycoliste, Stations, Habitats, Substrats,
+    # Plantes du Québec, Projets, Portail du mycologue). Chargés depuis la config
+    # plutôt que hardcodés : le projet est open source, chaque déploiement aura
+    # son propre workspace Notion.
+    NOTION_DB_IDS = {
+        "mycoliste":  _get_notion_secret("mycoliste_db_id",  "MYCOLISTE_DB_ID")  or "",
+        "stations":   _get_notion_secret("stations_db_id",   "STATIONS_DB_ID")   or "",
+        "habitats":   _get_notion_secret("habitats_db_id",   "HABITATS_DB_ID")   or "",
+        "substrats":  _get_notion_secret("substrats_db_id",  "SUBSTRATS_DB_ID")  or "",
+        "vegetation": _get_notion_secret("vegetation_db_id", "VEGETATION_DB_ID") or "",
+        "projets":    _get_notion_secret("projets_db_id",    "PROJETS_DB_ID")    or "",
+    }
+    PORTAIL_MYCOLOGUE_DB_ID = _get_notion_secret(
+        "portail_mycologue_db_id", "PORTAIL_MYCOLOGUE_DB_ID",
+    ) or ""
+
     has_secrets = bool(NOTION_TOKEN and DATABASE_ID)
 except Exception:
     has_secrets = False
     NOTION_TOKEN = None
     DATABASE_ID = None
+    NOTION_DB_IDS = {}
+    PORTAIL_MYCOLOGUE_DB_ID = ""
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Portail Myco", layout="wide")
@@ -163,8 +203,12 @@ def _cached_check_notion_duplicates(ids_tuple, token, db_id, url_property_name):
 
 @st.cache_data(ttl=3600, show_spinner="Chargement des référentiels taxonomiques...")
 def cached_build_lookup_maps(token):
-    """Charge et met en cache les référentiels Mycoliste, Stations, etc."""
-    return enricher.build_lookup_maps(token)
+    """Charge et met en cache les référentiels Mycoliste, Stations, etc.
+
+    Les IDs des BDs Notion sont passés depuis la config (st.secrets) plutôt
+    que hardcodés — voir NOTION_DB_IDS plus haut.
+    """
+    return enricher.build_lookup_maps(token, db_ids=NOTION_DB_IDS)
 
 
 def get_existing_notion_ids(ids, token, db_id, props_schema=None):
@@ -220,10 +264,6 @@ def get_notion_mycologists():
         return []
 
 
-# ID de la BD Notion "Portail du mycologue" — sert au lookup de Mycologue (relation).
-PORTAIL_MYCOLOGUE_DB_ID = "21eb20f2-b231-8036-91a2-c7733850f8e0"
-
-
 @st.cache_data(ttl=3600, show_spinner="Chargement des mycologues du Portail Notion...")
 def fetch_portail_pages(token):
     """
@@ -241,7 +281,7 @@ def fetch_portail_pages(token):
       2. Le popup de migration pour les utilisateurs existants
       3. Le lookup futur par login iNat pour les imports admin (autre user)
     """
-    if not token:
+    if not token or not PORTAIL_MYCOLOGUE_DB_ID:
         return []
 
     headers = {

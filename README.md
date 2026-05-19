@@ -37,19 +37,36 @@
 
 ## ⚙️ Configuration
 
-L'application utilise les secrets Streamlit pour la configuration sensible. Créez un fichier `.streamlit/secrets.toml` à la racine du projet :
+L'application utilise les secrets Streamlit pour **toute** la configuration spécifique au déploiement — token Notion, IDs de BDs, credentials Supabase. **Aucune valeur sensible n'est hardcodée dans le code**, ce qui permet de forker ce projet pour un autre workspace Notion sans toucher au code source.
+
+Créez un fichier `.streamlit/secrets.toml` à la racine du projet :
 
 ```toml
 [notion]
+# Token d'intégration Notion (à créer sur https://www.notion.so/profile/integrations)
 token = "secret_votre_token_notion"
-database_id = "votre_database_id_notion"
+
+# ID de la BD principale "Observations mycologiques" (où sont créées les pages à l'import)
+database_id = "votre_database_id_observations"
+
+# IDs des BDs annexes utilisées par enricher.py pour résoudre automatiquement
+# les relations (codes terrain → pages Notion). Pour récupérer un ID :
+# ouvrir la BD en pleine page sur Notion, l'URL contient
+# `https://www.notion.so/<workspace>/<db_id>?v=...` — copier la partie <db_id>.
+mycoliste_db_id         = "..."  # Liste des taxons / Mycoliste
+stations_db_id          = "..."  # Stations d'inventaire
+habitats_db_id          = "..."  # Habitats
+substrats_db_id         = "..."  # Substrats
+vegetation_db_id        = "..."  # Plantes du Québec (Végétation)
+projets_db_id           = "..."  # Projets d'inventaire
+portail_mycologue_db_id = "..."  # Portail du mycologue (utilisateurs)
 
 [supabase]
 url = "votre_url_supabase"
 key = "votre_cle_anon_supabase"
-
-# Optionnel : Liste blanche d'emails admin ou spécifiques si non géré par whitelist.py
 ```
+
+> **Note importante** : le fichier `.streamlit/secrets.toml` est dans `.gitignore` et ne doit **jamais** être commité. Chaque déploiement doit recréer son propre fichier de secrets.
 
 *Note : Le fichier `whitelist.py` contient également la liste des emails autorisés à s'inscrire.*
 

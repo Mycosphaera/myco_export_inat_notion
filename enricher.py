@@ -35,15 +35,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 NOTION_VERSION = "2022-06-28"
 
-# IDs des bases de données Notion (sans tirets pour les constantes, formatés à l'usage)
-DB_IDS = {
-    "mycoliste":    "1d8b20f2-b231-8166-aa5d-c1d48a5d6b25",
-    "stations":     "21eb20f2-b231-8005-8889-f00269290d91",
-    "habitats":     "1ecb20f2-b231-805b-ba21-edc052d574f1",
-    "substrats":    "1deb20f2-b231-804d-8f5d-e5d9cf67a906",
-    "vegetation":   "1fdb20f2-b231-80b4-83a4-d64e12ba5c85",
-    "projets":      "34cb20f2-b231-8198-823a-000bc36fc6b3",
-}
+# Les IDs des bases de données Notion sont fournis par l'appelant (app.py) qui
+# les charge depuis `.streamlit/secrets.toml` (clé [notion]). Cela permet de
+# déployer ce code en open source sans embarquer la configuration spécifique
+# d'un workspace Notion donné.
+#
+# Clés attendues dans le dict `db_ids` passé à `build_lookup_maps()` :
+#   mycoliste, stations, habitats, substrats, vegetation, projets
+#
+# Un ID manquant ou vide pour une clé donnée fait skipper le chargement de
+# cette BD avec un message dans `_errors` plutôt que de crasher l'app.
 
 # Noms des propriétés Notion dans la DB Observations (à ajuster si renommés)
 PROP_ESPECE          = "Espèce"
@@ -222,9 +223,32 @@ def _strip_infraspecific(name: str) -> str:
 def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
     """
     Charge les maps de résolution depuis Notion en parallèle.
+
+    Args:
+        token : Notion API token.
+        db_ids : dict avec les IDs des BDs Notion sous les clés
+            'mycoliste', 'stations', 'habitats', 'substrats', 'vegetation',
+            'projets'. Chargé par l'appelant depuis la config — voir le
+            commentaire en haut du module pour le format.
+
+    Si `db_ids` est None/vide, retourne un dict avec uniquement des maps vides
+    et un message dans `_errors` (n'aboie pas, ne crash pas).
     """
-    if db_ids is None:
-        db_ids = DB_IDS
+    if not db_ids:
+        return {
+            "species_map": {},
+            "taxon_id_map": {},
+            "old_names_map": {},
+            "station_map": {},
+            "habitat_codes": {},
+            "substrat_codes": {},
+            "vegetation_map": {},
+            "vegetation_code_map": {},
+            "vegetation_fr_map": {},
+            "vegetation_en_map": {},
+            "projet_map": {},
+            "_errors": ["Configuration manquante : db_ids vide. Vérifie ton secrets.toml."],
+        }
 
     maps: dict = {
         "species_map": {},
@@ -242,12 +266,15 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
     }
 
     def _load_mycoliste(session):
-        print(f"[Notion] Chargement de Mycoliste ({db_ids['mycoliste']})...")
+        db_id = db_ids.get("mycoliste")
+        if not db_id:
+            return {"error": "Mycoliste: ID manquant en config (clé `mycoliste_db_id`)"}
+        print(f"[Notion] Chargement de Mycoliste ({db_id})...")
         start_t = time.time()
         try:
             # Optimisation: On ne récupère que Nom Latin (title), Inat Taxon ID (NmF%3F) et Ancien(s) Nom (%3C~w%5C)
             props_to_fetch = ["title", "NmF%3F", "%3C~w%5C"]
-            pages = _query_db_all(token, db_ids["mycoliste"], session=session, filter_properties=props_to_fetch)
+            pages = _query_db_all(token, db_id, session=session, filter_properties=props_to_fetch)
             s_map, t_map, o_map = {}, {}, {}
             for p in pages:
                 pid = p["id"]
@@ -268,11 +295,14 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             return {"error": f"Mycoliste: {e}"}
 
     def _load_stations(session):
+        db_id = db_ids.get("stations")
+        if not db_id:
+            return {"error": "Stations: ID manquant en config (clé `stations_db_id`)"}
         print(f"[Notion] Chargement des Stations...")
         start_t = time.time()
         try:
             # Optimisation: Titre (title) et Code station (v%3A~~)
-            pages = _query_db_all(token, db_ids["stations"], session=session, filter_properties=["title", "v%3A~~"])
+            pages = _query_db_all(token, db_id, session=session, filter_properties=["title", "v%3A~~"])
             st_map = {}
             for p in pages:
                 props = p["properties"]
@@ -288,11 +318,14 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             return {"error": f"Stations: {e}"}
 
     def _load_habitats(session):
+        db_id = db_ids.get("habitats")
+        if not db_id:
+            return {"error": "Habitats: ID manquant en config (clé `habitats_db_id`)"}
         print(f"[Notion] Chargement des Habitats...")
         start_t = time.time()
         try:
             # Optimisation: Titre (title) et Code (L%5DW%40)
-            pages = _query_db_all(token, db_ids["habitats"], session=session, filter_properties=["title", "L%5DW%40"])
+            pages = _query_db_all(token, db_id, session=session, filter_properties=["title", "L%5DW%40"])
             h_map = {}
             for p in pages:
                 code = _get_rich_text(p["properties"].get("Code terrain", {}))
@@ -304,11 +337,14 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             return {"error": f"Habitats: {e}"}
 
     def _load_substrats(session):
+        db_id = db_ids.get("substrats")
+        if not db_id:
+            return {"error": "Substrats: ID manquant en config (clé `substrats_db_id`)"}
         print(f"[Notion] Chargement des Substrats...")
         start_t = time.time()
         try:
             # Optimisation: Titre (title) et Code (q_lR)
-            pages = _query_db_all(token, db_ids["substrats"], session=session, filter_properties=["title", "q_lR"])
+            pages = _query_db_all(token, db_id, session=session, filter_properties=["title", "q_lR"])
             su_map = {}
             for p in pages:
                 code = _get_rich_text(p["properties"].get("Code terrain", {}))
@@ -320,13 +356,16 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             return {"error": f"Substrats: {e}"}
 
     def _load_vegetation(session):
+        db_id = db_ids.get("vegetation")
+        if not db_id:
+            return {"error": "Végétation: ID manquant en config (clé `vegetation_db_id`)"}
         print(f"[Notion] Chargement de la Végétation...")
         start_t = time.time()
         try:
             # Property IDs : title (Nom latin), hNJw (code_plante),
             #                oZxm (nom_vernaculaire_fr), %3AUtU (nom_vernaculaire_en)
             pages = _query_db_all(
-                token, db_ids["vegetation"], session=session,
+                token, db_id, session=session,
                 filter_properties=["title", "hNJw", "oZxm", "%3AUtU"],
             )
             v_latin, v_code, v_fr, v_en = {}, {}, {}, {}
@@ -371,10 +410,13 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             return {"error": f"Végétation: {e}"}
 
     def _load_projets(session):
+        db_id = db_ids.get("projets")
+        if not db_id:
+            return {"error": "Projets: ID manquant en config (clé `projets_db_id`)"}
         print(f"[Notion] Chargement des Projets d'inventaire...")
         start_t = time.time()
         try:
-            pages = _query_db_all(token, db_ids["projets"], session=session)
+            pages = _query_db_all(token, db_id, session=session)
             p_map = {}
             for p in pages:
                 props = p["properties"]
