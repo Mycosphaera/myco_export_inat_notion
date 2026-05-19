@@ -9,14 +9,19 @@ Remplace les automations natives Notion pour :
   - Fongarium checkbox (détection du mot "coll" dans Description rapide)
 
 Convention de codes dans le champ Notes iNat (= Description rapide après import) :
-  #FSL01          → Station d'inventaire (et Projet déduit du préfixe alphabétique)
+  *FSL01          → Station d'inventaire (et Projet déduit du préfixe alphabétique)
   #coll           → Fongarium (checkbox)
   !BOM            → Habitat général (via "Code terrain" de la BD Habitats)
   $BMC            → Substrat (via "Code terrain" de la BD Substrats)
-  @BOJ            → Végétation (via "code_plante" de la BD Plantes)
-  @@BOJ           → Hôte - substrat (via "code_plante" de la BD Plantes)
+  #BOJ            → Végétation (via "code_plante" de la BD Plantes)
+  ##BOJ           → Hôte - substrat (via "code_plante" de la BD Plantes)
   #Acer_saccharum → Végétation (rétrocompat : nom latin avec underscore)
   Bouleau jaune   → Végétation (texte libre — match exact contre nom fr/lat/en de la BD)
+
+Note : le préfixe `@` n'est pas utilisable — iNaturalist l'interprète comme une
+mention d'utilisateur (autocomplétion), ce qui déclenche du bruit et peut lier
+l'observation au mauvais compte. Le `*` (asterisk) remplace donc `#` pour les
+stations afin que `#` soit libéré pour les plantes (codes courts plus nombreux).
 
 Les maps sont construites dynamiquement depuis Notion au démarrage de session —
 aucune modification de code requise quand une nouvelle station ou un nouveau code est créé.
@@ -479,14 +484,18 @@ def parse_description_codes(
     """
     Extrait les codes terrain depuis Description rapide selon la convention :
 
-      #FSL01          → Station d'inventaire (+ projet déduit du préfixe alpha)
+      *FSL01          → Station d'inventaire (+ projet déduit du préfixe alpha)
       #coll           → Fongarium (checkbox)
       !BOM            → Habitat général (via "Code terrain")
       $BMC            → Substrat (via "Code terrain")
-      @BOJ            → Végétation (via code_plante)
-      @@BOJ           → Hôte - substrat (via code_plante)
+      #BOJ            → Végétation (via code_plante)
+      ##BOJ           → Hôte - substrat (via code_plante)
       #Acer_saccharum → Végétation (rétrocompat nom latin avec underscore)
       Bouleau jaune   → Végétation (texte libre — match exact contre nom fr/lat/en)
+
+    `@` n'est PAS utilisé : iNaturalist l'interprète comme une mention
+    d'utilisateur (autocomplétion sur les noms de membres iNat), ce qui crée
+    du bruit et peut lier l'observation au mauvais compte.
 
     Insensible à la casse pour les codes préfixés. Le texte libre est scanné
     en greedy longest-first jusqu'à 4 mots consécutifs.
@@ -528,22 +537,25 @@ def parse_description_codes(
     for raw in description.split():
         if not raw:
             continue
-        # @@CODE → Hôte - substrat (lookup via code_plante)
-        if raw.startswith("@@"):
+        # *XXX → Station d'inventaire (+ Projet déduit du préfixe alpha)
+        if raw.startswith("*"):
+            code = _strip_punct(raw[1:]).upper()
+            if code and code in station_map:
+                result["station_code"] = code
+                result["projet_page_id"] = None
+                if projet_map:
+                    prefix = _extract_station_prefix(code)
+                    if prefix and prefix in projet_map:
+                        result["projet_page_id"] = projet_map[prefix]
+            continue
+
+        # ##XXX → Hôte - substrat (lookup via code_plante) — tester AVANT #
+        if raw.startswith("##"):
             code = _strip_punct(raw[2:]).upper()
             if code and code in vegetation_code_map:
                 pid = vegetation_code_map[code]
                 if pid not in result["hote_substrat_page_ids"]:
                     result["hote_substrat_page_ids"].append(pid)
-            continue
-
-        # @CODE → Végétation (lookup via code_plante)
-        if raw.startswith("@"):
-            code = _strip_punct(raw[1:]).upper()
-            if code and code in vegetation_code_map:
-                pid = vegetation_code_map[code]
-                if pid not in result["vegetation_page_ids"]:
-                    result["vegetation_page_ids"].append(pid)
             continue
 
         # !CODE → Habitat général
@@ -564,20 +576,17 @@ def parse_description_codes(
                     result["substrat_page_ids"].append(pid)
             continue
 
-        # #XXX → Station, Fongarium ou (rétrocompat) Végétation par nom latin
+        # #XXX → Fongarium (#coll) ou Végétation (code_plante puis rétrocompat latin)
         if raw.startswith("#"):
             code = _strip_punct(raw[1:]).upper()
             if not code:
                 continue
             if code == "COLL":
                 result["has_coll"] = True
-            elif code in station_map:
-                result["station_code"] = code
-                result["projet_page_id"] = None
-                if projet_map:
-                    prefix = _extract_station_prefix(code)
-                    if prefix and prefix in projet_map:
-                        result["projet_page_id"] = projet_map[prefix]
+            elif code in vegetation_code_map:
+                pid = vegetation_code_map[code]
+                if pid not in result["vegetation_page_ids"]:
+                    result["vegetation_page_ids"].append(pid)
             else:
                 # Rétrocompat : #Acer_saccharum → match nom latin
                 latin_key = code.replace("_", " ").lower()
