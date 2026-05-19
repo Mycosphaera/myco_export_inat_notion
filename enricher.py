@@ -298,7 +298,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         db_id = db_ids.get("stations")
         if not db_id:
             return {"error": "Stations: ID manquant en config (clé `stations_db_id`)"}
-        print(f"[Notion] Chargement des Stations...")
+        print("[Notion] Chargement des Stations...")
         start_t = time.time()
         try:
             # Optimisation: Titre (title) et Code station (v%3A~~)
@@ -321,7 +321,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         db_id = db_ids.get("habitats")
         if not db_id:
             return {"error": "Habitats: ID manquant en config (clé `habitats_db_id`)"}
-        print(f"[Notion] Chargement des Habitats...")
+        print("[Notion] Chargement des Habitats...")
         start_t = time.time()
         try:
             # Optimisation: Titre (title) et Code (L%5DW%40)
@@ -340,7 +340,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         db_id = db_ids.get("substrats")
         if not db_id:
             return {"error": "Substrats: ID manquant en config (clé `substrats_db_id`)"}
-        print(f"[Notion] Chargement des Substrats...")
+        print("[Notion] Chargement des Substrats...")
         start_t = time.time()
         try:
             # Optimisation: Titre (title) et Code (q_lR)
@@ -359,7 +359,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         db_id = db_ids.get("vegetation")
         if not db_id:
             return {"error": "Végétation: ID manquant en config (clé `vegetation_db_id`)"}
-        print(f"[Notion] Chargement de la Végétation...")
+        print("[Notion] Chargement de la Végétation...")
         start_t = time.time()
         try:
             # Property IDs : title (Nom latin), hNJw (code_plante),
@@ -413,7 +413,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         db_id = db_ids.get("projets")
         if not db_id:
             return {"error": "Projets: ID manquant en config (clé `projets_db_id`)"}
-        print(f"[Notion] Chargement des Projets d'inventaire...")
+        print("[Notion] Chargement des Projets d'inventaire...")
         start_t = time.time()
         try:
             pages = _query_db_all(token, db_id, session=session)
