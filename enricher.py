@@ -5,7 +5,18 @@ Remplace les automations natives Notion pour :
   - Espèce (Mycoliste lookup par nom scientifique)
   - Station d'inventaire (code dans Description rapide → Stations DB)
   - Habitat général / Substrat (codes terrain → BDs Habitats / Substrats)
+  - Végétation / Hôte - substrat (codes plantes → BD Plantes)
   - Fongarium checkbox (détection du mot "coll" dans Description rapide)
+
+Convention de codes dans le champ Notes iNat (= Description rapide après import) :
+  #FSL01          → Station d'inventaire (et Projet déduit du préfixe alphabétique)
+  #coll           → Fongarium (checkbox)
+  !BOM            → Habitat général (via "Code terrain" de la BD Habitats)
+  $BMC            → Substrat (via "Code terrain" de la BD Substrats)
+  @BOJ            → Végétation (via "code_plante" de la BD Plantes)
+  @@BOJ           → Hôte - substrat (via "code_plante" de la BD Plantes)
+  #Acer_saccharum → Végétation (rétrocompat : nom latin avec underscore)
+  Bouleau jaune   → Végétation (texte libre — match exact contre nom fr/lat/en de la BD)
 
 Les maps sont construites dynamiquement depuis Notion au démarrage de session —
 aucune modification de code requise quand une nouvelle station ou un nouveau code est créé.
@@ -34,7 +45,8 @@ PROP_ESPECE          = "Espèce"
 PROP_STATION         = "Station d'inventaire"
 PROP_HABITAT         = "Habitat général"
 PROP_SUBSTRAT        = "Substrat"
-PROP_VEGETATION      = "Plante associée"
+PROP_VEGETATION      = "Végétation"
+PROP_HOTE_SUBSTRAT   = "Hôte - substrat"
 PROP_FONGARIUM_CHECK = "Fongarium"
 PROP_TAXON_ID        = "Inat Taxon ID"
 PROP_PROJET          = "Projet d'inventaire"
@@ -216,6 +228,11 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         "station_map": {},
         "habitat_codes": {},
         "substrat_codes": {},
+        "vegetation_map": {},          # Nom latin (rétrocompat #Latin_name)
+        "vegetation_code_map": {},     # code_plante (@CODE et @@CODE)
+        "vegetation_fr_map": {},       # nom_vernaculaire_fr (bare-text)
+        "vegetation_en_map": {},       # nom_vernaculaire_en (bare-text)
+        "projet_map": {},
         "_errors": []
     }
 
@@ -301,14 +318,49 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print(f"[Notion] Chargement de la Végétation...")
         start_t = time.time()
         try:
-            # Optimisation: Nom latin (title) et Nom français (oZxm)
-            pages = _query_db_all(token, db_ids["vegetation"], session=session, filter_properties=["title", "oZxm"])
-            v_map = {}
+            # Property IDs : title (Nom latin), hNJw (code_plante),
+            #                oZxm (nom_vernaculaire_fr), %3AUtU (nom_vernaculaire_en)
+            pages = _query_db_all(
+                token, db_ids["vegetation"], session=session,
+                filter_properties=["title", "hNJw", "oZxm", "%3AUtU"],
+            )
+            v_latin, v_code, v_fr, v_en = {}, {}, {}, {}
             for p in pages:
-                name = _get_title(p["properties"])
-                if name: v_map[_normalize(name)] = p["id"]
-            print(f"[Notion] Végétation chargée : {len(v_map)} en {time.time()-start_t:.1f}s")
-            return {"vegetation_map": v_map}
+                props = p["properties"]
+                pid = p["id"]
+                # Nom latin (title)
+                latin = _get_title(props)
+                if latin:
+                    v_latin[_normalize(latin)] = pid
+                # code_plante (rich_text) — clé en majuscules pour comparaison @CODE
+                code = _get_rich_text(props.get("code_plante", {}))
+                if code:
+                    v_code[code.upper()] = pid
+                # nom_vernaculaire_fr — peut contenir plusieurs noms séparés par ; ou ,
+                fr_raw = _get_rich_text(props.get("nom_vernaculaire_fr", {}))
+                if fr_raw:
+                    for part in re.split(r"[,;]", fr_raw):
+                        part = part.strip()
+                        if part:
+                            v_fr[_normalize(part)] = pid
+                # nom_vernaculaire_en — idem
+                en_raw = _get_rich_text(props.get("nom_vernaculaire_en", {}))
+                if en_raw:
+                    for part in re.split(r"[,;]", en_raw):
+                        part = part.strip()
+                        if part:
+                            v_en[_normalize(part)] = pid
+            print(
+                f"[Notion] Végétation chargée : {len(v_latin)} latins, "
+                f"{len(v_code)} codes, {len(v_fr)} fr, {len(v_en)} en "
+                f"en {time.time()-start_t:.1f}s"
+            )
+            return {
+                "vegetation_map": v_latin,
+                "vegetation_code_map": v_code,
+                "vegetation_fr_map": v_fr,
+                "vegetation_en_map": v_en,
+            }
         except Exception as e:
             print(f"[Notion] Erreur Végétation: {e}")
             return {"error": f"Végétation: {e}"}
@@ -365,6 +417,54 @@ def _extract_station_prefix(station_code: str) -> str | None:
     return m.group(1).upper() if m else None
 
 
+# Caractères de ponctuation à retirer aux extrémités des tokens texte libre
+_PUNCT_RE = re.compile(r'^[\s.,;:!?()\[\]"\'«»]+|[\s.,;:!?()\[\]"\'«»]+$')
+
+
+def _strip_punct(token: str) -> str:
+    """Enlève la ponctuation aux extrémités d'un token."""
+    return _PUNCT_RE.sub("", token)
+
+
+def _scan_bare_plant_names(
+    bare_tokens: list[str],
+    latin_map: dict,
+    fr_map: dict,
+    en_map: dict,
+    max_ngram: int = 4,
+) -> list[str]:
+    """
+    Scan greedy longest-first des noms de plantes (latin/fr/en) dans une liste
+    de tokens texte libre. Match exact requis contre la BD.
+
+    Retourne une liste de page_ids uniques (ordre de première occurrence).
+    """
+    if not bare_tokens or not (latin_map or fr_map or en_map):
+        return []
+
+    matched_ids: list[str] = []
+    consumed = [False] * len(bare_tokens)
+    n_tokens = len(bare_tokens)
+
+    # Greedy : du n-gramme le plus long au plus court
+    for n in range(min(max_ngram, n_tokens), 0, -1):
+        for i in range(n_tokens - n + 1):
+            if any(consumed[j] for j in range(i, i + n)):
+                continue
+            phrase = " ".join(bare_tokens[i:i + n])
+            key = _normalize(phrase)
+            if not key:
+                continue
+            pid = latin_map.get(key) or fr_map.get(key) or en_map.get(key)
+            if pid:
+                if pid not in matched_ids:
+                    matched_ids.append(pid)
+                for j in range(i, i + n):
+                    consumed[j] = True
+
+    return matched_ids
+
+
 def parse_description_codes(
     description: str,
     station_map: dict,
@@ -372,28 +472,34 @@ def parse_description_codes(
     substrat_codes: dict,
     vegetation_map: dict = None,
     projet_map: dict = None,
+    vegetation_code_map: dict = None,
+    vegetation_fr_map: dict = None,
+    vegetation_en_map: dict = None,
 ) -> dict:
     """
-    Extrait les codes terrain préfixés par '#' depuis Description rapide.
+    Extrait les codes terrain depuis Description rapide selon la convention :
 
-    Convention : tous les codes sont écrits avec '#' dans les Notes iNat.
-      Exemple : "#FSL01 #coll #BOM texte libre sans risque"
+      #FSL01          → Station d'inventaire (+ projet déduit du préfixe alpha)
+      #coll           → Fongarium (checkbox)
+      !BOM            → Habitat général (via "Code terrain")
+      $BMC            → Substrat (via "Code terrain")
+      @BOJ            → Végétation (via code_plante)
+      @@BOJ           → Hôte - substrat (via code_plante)
+      #Acer_saccharum → Végétation (rétrocompat nom latin avec underscore)
+      Bouleau jaune   → Végétation (texte libre — match exact contre nom fr/lat/en)
 
-    Seuls les tokens commençant par '#' sont interprétés — le texte libre
-    est ignoré sans risque de faux positifs.
-    Insensible à la casse : #FSL01, #fsl01, #Fsl01 sont équivalents.
-
-    Le projet est déduit automatiquement du préfixe alphabétique du code station
-    (ex: FSL01 → préfixe FSL → Projet "Forêt Seigneurie Lotbinière").
+    Insensible à la casse pour les codes préfixés. Le texte libre est scanné
+    en greedy longest-first jusqu'à 4 mots consécutifs.
 
     Retourne :
       {
-        "station_code"       : str | None,
-        "projet_page_id"     : str | None,   ← déduit du préfixe station
-        "has_coll"           : bool,
-        "habitat_page_ids"   : list[str],
-        "substrat_page_ids"  : list[str],
-        "vegetation_page_ids": list[str],
+        "station_code"           : str | None,
+        "projet_page_id"         : str | None,
+        "has_coll"               : bool,
+        "habitat_page_ids"       : list[str],
+        "substrat_page_ids"      : list[str],
+        "vegetation_page_ids"    : list[str],
+        "hote_substrat_page_ids" : list[str],
       }
     """
     result = {
@@ -403,32 +509,96 @@ def parse_description_codes(
         "habitat_page_ids": [],
         "substrat_page_ids": [],
         "vegetation_page_ids": [],
+        "hote_substrat_page_ids": [],
     }
 
     if not description:
         return result
 
-    for token in description.split():
-        if not token.startswith("#"):
+    vegetation_code_map = vegetation_code_map or {}
+    vegetation_fr_map = vegetation_fr_map or {}
+    vegetation_en_map = vegetation_en_map or {}
+    vegetation_map = vegetation_map or {}
+    habitat_codes = habitat_codes or {}
+    substrat_codes = substrat_codes or {}
+    station_map = station_map or {}
+
+    bare_tokens: list[str] = []
+
+    for raw in description.split():
+        if not raw:
             continue
-        code = token[1:].upper()  # strip '#' et normaliser en majuscules
-        if code == "COLL":
-            result["has_coll"] = True
-        elif code in habitat_codes:
-            result["habitat_page_ids"].append(habitat_codes[code])
-        elif code in substrat_codes:
-            result["substrat_page_ids"].append(substrat_codes[code])
-        elif code in station_map:
-            result["station_code"] = code
-            # Déduire le projet depuis le préfixe alphabétique
-            if projet_map:
-                prefix = _extract_station_prefix(code)
-                if prefix and prefix in projet_map:
-                    result["projet_page_id"] = projet_map[prefix]
-        elif vegetation_map:
-            norm_code = code.replace("_", " ").lower()
-            if norm_code in vegetation_map:
-                result["vegetation_page_ids"].append(vegetation_map[norm_code])
+        # @@CODE → Hôte - substrat (lookup via code_plante)
+        if raw.startswith("@@"):
+            code = _strip_punct(raw[2:]).upper()
+            if code and code in vegetation_code_map:
+                pid = vegetation_code_map[code]
+                if pid not in result["hote_substrat_page_ids"]:
+                    result["hote_substrat_page_ids"].append(pid)
+            continue
+
+        # @CODE → Végétation (lookup via code_plante)
+        if raw.startswith("@"):
+            code = _strip_punct(raw[1:]).upper()
+            if code and code in vegetation_code_map:
+                pid = vegetation_code_map[code]
+                if pid not in result["vegetation_page_ids"]:
+                    result["vegetation_page_ids"].append(pid)
+            continue
+
+        # !CODE → Habitat général
+        if raw.startswith("!"):
+            code = _strip_punct(raw[1:]).upper()
+            if code and code in habitat_codes:
+                pid = habitat_codes[code]
+                if pid not in result["habitat_page_ids"]:
+                    result["habitat_page_ids"].append(pid)
+            continue
+
+        # $CODE → Substrat
+        if raw.startswith("$"):
+            code = _strip_punct(raw[1:]).upper()
+            if code and code in substrat_codes:
+                pid = substrat_codes[code]
+                if pid not in result["substrat_page_ids"]:
+                    result["substrat_page_ids"].append(pid)
+            continue
+
+        # #XXX → Station, Fongarium ou (rétrocompat) Végétation par nom latin
+        if raw.startswith("#"):
+            code = _strip_punct(raw[1:]).upper()
+            if not code:
+                continue
+            if code == "COLL":
+                result["has_coll"] = True
+            elif code in station_map:
+                result["station_code"] = code
+                result["projet_page_id"] = None
+                if projet_map:
+                    prefix = _extract_station_prefix(code)
+                    if prefix and prefix in projet_map:
+                        result["projet_page_id"] = projet_map[prefix]
+            else:
+                # Rétrocompat : #Acer_saccharum → match nom latin
+                latin_key = code.replace("_", " ").lower()
+                if latin_key in vegetation_map:
+                    pid = vegetation_map[latin_key]
+                    if pid not in result["vegetation_page_ids"]:
+                        result["vegetation_page_ids"].append(pid)
+            continue
+
+        # Aucun préfixe → texte libre, candidat au matching de nom de plante
+        cleaned = _strip_punct(raw)
+        if cleaned:
+            bare_tokens.append(cleaned)
+
+    # Scan greedy du texte libre pour les noms de plantes (latin/fr/en)
+    bare_matches = _scan_bare_plant_names(
+        bare_tokens, vegetation_map, vegetation_fr_map, vegetation_en_map
+    )
+    for pid in bare_matches:
+        if pid not in result["vegetation_page_ids"]:
+            result["vegetation_page_ids"].append(pid)
 
     return result
 
@@ -521,16 +691,23 @@ def resolve_and_update_relations(
 
     Retourne (success: bool, message: str).
     """
-    species_map    = maps.get("species_map", {})
-    taxon_id_map   = maps.get("taxon_id_map", {})
-    old_names_map  = maps.get("old_names_map", {})
-    station_map    = maps.get("station_map", {})
-    habitat_codes  = maps.get("habitat_codes", {})
-    substrat_codes = maps.get("substrat_codes", {})
-    vegetation_map = maps.get("vegetation_map", {})
-    projet_map     = maps.get("projet_map", {})
+    species_map         = maps.get("species_map", {})
+    taxon_id_map        = maps.get("taxon_id_map", {})
+    old_names_map       = maps.get("old_names_map", {})
+    station_map         = maps.get("station_map", {})
+    habitat_codes       = maps.get("habitat_codes", {})
+    substrat_codes      = maps.get("substrat_codes", {})
+    vegetation_map      = maps.get("vegetation_map", {})
+    vegetation_code_map = maps.get("vegetation_code_map", {})
+    vegetation_fr_map   = maps.get("vegetation_fr_map", {})
+    vegetation_en_map   = maps.get("vegetation_en_map", {})
+    projet_map          = maps.get("projet_map", {})
 
-    parsed     = parse_description_codes(description, station_map, habitat_codes, substrat_codes, vegetation_map, projet_map)
+    parsed = parse_description_codes(
+        description, station_map, habitat_codes, substrat_codes,
+        vegetation_map, projet_map,
+        vegetation_code_map, vegetation_fr_map, vegetation_en_map,
+    )
     species_id = match_species(taxon_name, species_map, taxon_id, taxon_id_map, old_names_map)
 
     props: dict = {}
@@ -580,11 +757,15 @@ def resolve_and_update_relations(
         props[PROP_SUBSTRAT] = {"relation": [{"id": sid} for sid in parsed["substrat_page_ids"]]}
         log.append(f"Substrat→{len(parsed['substrat_page_ids'])} lié(s)")
 
-    # Végétation (Plante associée)
-    # Note: On pourrait aussi tenter un match par texte si la description contient des noms de plantes
+    # Végétation
     if parsed["vegetation_page_ids"]:
         props[PROP_VEGETATION] = {"relation": [{"id": vid} for vid in parsed["vegetation_page_ids"]]}
         log.append(f"Végétation→{len(parsed['vegetation_page_ids'])} liée(s)")
+
+    # Hôte - substrat (préfixe @@CODE)
+    if parsed["hote_substrat_page_ids"]:
+        props[PROP_HOTE_SUBSTRAT] = {"relation": [{"id": hid} for hid in parsed["hote_substrat_page_ids"]]}
+        log.append(f"Hôte-substrat→{len(parsed['hote_substrat_page_ids'])} lié(s)")
 
     if not props:
         return False, "Rien à résoudre"
