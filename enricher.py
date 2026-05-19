@@ -475,11 +475,11 @@ def parse_description_codes(
     station_map: dict,
     habitat_codes: dict,
     substrat_codes: dict,
-    vegetation_map: dict = None,
-    projet_map: dict = None,
-    vegetation_code_map: dict = None,
-    vegetation_fr_map: dict = None,
-    vegetation_en_map: dict = None,
+    vegetation_map: dict | None = None,
+    projet_map: dict | None = None,
+    vegetation_code_map: dict | None = None,
+    vegetation_fr_map: dict | None = None,
+    vegetation_en_map: dict | None = None,
 ) -> dict:
     """
     Extrait les codes terrain depuis Description rapide selon la convention :
@@ -771,7 +771,7 @@ def resolve_and_update_relations(
         props[PROP_VEGETATION] = {"relation": [{"id": vid} for vid in parsed["vegetation_page_ids"]]}
         log.append(f"Végétation→{len(parsed['vegetation_page_ids'])} liée(s)")
 
-    # Hôte - substrat (préfixe @@CODE)
+    # Hôte - substrat (préfixe ##CODE)
     if parsed["hote_substrat_page_ids"]:
         props[PROP_HOTE_SUBSTRAT] = {"relation": [{"id": hid} for hid in parsed["hote_substrat_page_ids"]]}
         log.append(f"Hôte-substrat→{len(parsed['hote_substrat_page_ids'])} lié(s)")

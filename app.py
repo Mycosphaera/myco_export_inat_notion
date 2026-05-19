@@ -414,16 +414,18 @@ def login_page():
                     )
                     reg_portail_page_id = None
                     if portail_pages:
-                        portail_labels = ["— Sélectionne ta page —"] + [p["label"] for p in portail_pages]
+                        # On passe les dicts complets en options + format_func pour l'affichage —
+                        # ainsi 2 pages avec un label identique restent des objets distincts
+                        # et le retour de selectbox donne directement le bon page_id.
+                        portail_options = [None] + portail_pages
                         portail_choice = st.selectbox(
                             "Sélectionne ta page",
-                            options=portail_labels,
+                            options=portail_options,
+                            format_func=lambda p: "— Sélectionne ta page —" if p is None else p["label"],
                             key="reg_portail_select",
                         )
-                        if portail_choice != portail_labels[0]:
-                            # Retrouver le page_id correspondant
-                            idx = portail_labels.index(portail_choice) - 1
-                            reg_portail_page_id = portail_pages[idx]["page_id"]
+                        if portail_choice is not None:
+                            reg_portail_page_id = portail_choice["page_id"]
                     else:
                         st.warning(
                             "⚠️ Impossible de charger les pages du Portail Notion. "
@@ -502,19 +504,22 @@ def portail_setup_gate():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.form("portail_setup_form"):
-            labels = ["— Sélectionne ta page —"] + [p["label"] for p in portail_pages]
+            # On passe les dicts complets en options + format_func — évite la collision
+            # si 2 pages partagent le même label (ex: deux mycologues prénommés "Véronique").
+            options = [None] + portail_pages
             choice = st.selectbox(
                 "Ta page Portail du mycologue",
-                options=labels,
+                options=options,
                 index=default_idx,
+                format_func=lambda p: "— Sélectionne ta page —" if p is None else p["label"],
                 key="setup_portail_select",
             )
             confirm = st.form_submit_button("Lier ma page et continuer", type="primary")
             if confirm:
-                if choice == labels[0]:
+                if choice is None:
                     st.warning("Sélectionne ta page dans la liste avant de continuer.")
                 else:
-                    selected = portail_pages[labels.index(choice) - 1]
+                    selected = choice
                     user_id = user_info.get("id")
                     if not user_id:
                         st.error("Profil utilisateur incomplet — impossible de mettre à jour.")
@@ -2475,13 +2480,17 @@ elif nav_mode == "📊 Tableau de Bord":
                         if user_name: props["Mycologue"] = {"select": {"name": user_name}}
                         # Mycologue (relation) — uniquement pour self-import et si page_id configuré
                         if is_self_import and current_user_portail_page_id:
-                            # Détecter dynamiquement le nom exact (avec ou sans casse particulière)
+                            # Détecter dynamiquement le nom exact dans le schéma de la BD.
+                            # Si aucune colonne relation Mycologue n'existe, on skip plutôt
+                            # que de défauter sur un nom hardcodé qui ferait rejeter la page
+                            # par Notion (400 "is not a property that exists").
                             relation_key = next(
                                 (k for k, v in db_props_schema.items()
                                  if "mycologue" in k.lower() and "relation" in k.lower() and v.get("type") == "relation"),
-                                "Mycologue (relation)",
+                                None,
                             )
-                            props[relation_key] = {"relation": [{"id": current_user_portail_page_id}]}
+                            if relation_key:
+                                props[relation_key] = {"relation": [{"id": current_user_portail_page_id}]}
                         if obs_url: props["URL Inaturalist"] = {"url": obs_url}
                         if photo_files_payload: props["Photo macro"] = {"files": photo_files_payload}
                         
