@@ -2095,11 +2095,17 @@ elif nav_mode == "📊 Tableau de Bord":
                 dedup_check_failed = False
                 try:
                     existing_ids = get_existing_notion_ids(ids_to_check, NOTION_TOKEN, DATABASE_ID, props_schema=current_schema)
-                except Exception as e:
+                except (requests.RequestException, RuntimeError) as e:
                     # Le pre-check peut timeout sur de gros volumes. Plutôt que bloquer l'import
                     # complètement, on dégrade : on prévient l'utilisateur que les doublons n'ont
                     # pas été vérifiés et on décoche tout par défaut pour forcer une décision
                     # consciente case-par-case.
+                    # Capture ciblée :
+                    #   - requests.RequestException : Timeout, ConnectionError, HTTPError remontés
+                    #     par _cached_check_notion_duplicates après l'épuisement des retries
+                    #   - RuntimeError : "Échec après plusieurs tentatives" + "colonne URL iNat
+                    #     introuvable" (cf. get_existing_notion_ids et _cached_check_notion_duplicates)
+                    # Toute autre exception remonte volontairement pour ne pas masquer un bug.
                     dedup_check_failed = True
                     existing_ids = set()
                     st.warning(
