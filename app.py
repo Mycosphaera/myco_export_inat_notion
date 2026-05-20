@@ -2442,7 +2442,7 @@ elif nav_mode == "📊 Tableau de Bord":
             st.markdown("&nbsp;", unsafe_allow_html=True)  # vertical alignment
             if st.button("Appliquer", key="bulk_ident_apply", use_container_width=True):
                 if bulk_ident:
-                    mask = st.session_state.main_import_df["Import?"] == True
+                    mask = st.session_state.main_import_df["Import?"].astype(bool)
                     n_updated = int(mask.sum())
                     if n_updated > 0:
                         st.session_state.main_import_df.loc[mask, "Identificateur"] = bulk_ident
@@ -2475,7 +2475,7 @@ elif nav_mode == "📊 Tableau de Bord":
             if st.button("Restaurer depuis iNat", key="restore_descriptions", use_container_width=True):
                 inat_by_id = {str(o.get("id")): o for o in (st.session_state.get("search_results") or [])}
                 df = st.session_state.main_import_df
-                mask = df["Import?"] == True
+                mask = df["Import?"].astype(bool)
                 n_restored = 0
                 for idx in df.index[mask]:
                     obs_id_str = str(df.at[idx, "ID"])
