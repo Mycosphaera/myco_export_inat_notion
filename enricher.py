@@ -301,8 +301,9 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print("[Notion] Chargement des Stations...")
         start_t = time.time()
         try:
-            # Optimisation: Titre (title) et Code station (v%3A~~)
-            pages = _query_db_all(token, db_id, session=session, filter_properties=["title", "v%3A~~"])
+            # Pas de filter_properties : les property IDs Notion changent quand
+            # la colonne est recréée. Robustesse > perf sur cette petite BD.
+            pages = _query_db_all(token, db_id, session=session)
             st_map = {}
             for p in pages:
                 props = p["properties"]
@@ -324,8 +325,8 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print("[Notion] Chargement des Habitats...")
         start_t = time.time()
         try:
-            # Optimisation: Titre (title) et Code (L%5DW%40)
-            pages = _query_db_all(token, db_id, session=session, filter_properties=["title", "L%5DW%40"])
+            # Pas de filter_properties : robustesse face aux changements d'ID Notion.
+            pages = _query_db_all(token, db_id, session=session)
             h_map = {}
             for p in pages:
                 code = _get_rich_text(p["properties"].get("Code terrain", {}))
@@ -343,8 +344,8 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print("[Notion] Chargement des Substrats...")
         start_t = time.time()
         try:
-            # Optimisation: Titre (title) et Code (q_lR)
-            pages = _query_db_all(token, db_id, session=session, filter_properties=["title", "q_lR"])
+            # Pas de filter_properties : robustesse face aux changements d'ID Notion.
+            pages = _query_db_all(token, db_id, session=session)
             su_map = {}
             for p in pages:
                 code = _get_rich_text(p["properties"].get("Code terrain", {}))
