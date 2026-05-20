@@ -2360,8 +2360,8 @@ elif nav_mode == "📊 Tableau de Bord":
              current_key = f"main_editor_{st.session_state.get('editor_key_version', 0)}"
              editor_state = st.session_state.get(current_key, {})
              edited_rows = editor_state.get("edited_rows", {})
-             st.write(f"Edited Rows: {edited_rows}")
-             
+             print(f"[DEBUG] Magic button — edited_rows: {edited_rows}")
+
              # Apply edits (Collection checkbox mainly) BEFORE logic
              # CRITICAL: If we filter, 0-based index in editor refers to 0-th row of df_display.
              # We must map 0 -> df_display.index[0].
