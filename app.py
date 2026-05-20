@@ -360,6 +360,67 @@ def find_portail_page_by_inat(token, inat_login):
             return p
     return None
 
+
+# Suffixes taxonomiques fongiques au-dessus du genre — détection auto de
+# l'État d'identification à l'import.
+_HIGHER_RANK_SUFFIXES = (
+    "aceae",      # famille (ex: Boletaceae)
+    "ales",       # ordre (ex: Boletales)
+    "mycetes",    # classe (ex: Agaricomycetes)
+    "mycetidae",  # sous-classe (ex: Agaricomycetidae)
+    "mycotina",   # sous-phylum (ex: Pucciniomycotina)
+    "mycota",     # phylum (ex: Basidiomycota)
+)
+
+
+def auto_etat_identification(taxon_name: str) -> str:
+    """
+    Détecte automatiquement l'`État d'identification` à partir du nom scientifique.
+
+    Règles :
+      - Suffixe famille/ordre/classe/phylum (-aceae, -ales, -mycetes, etc.)
+          → "Groupe identifié"
+      - Genre seul (1 mot sans suffixe supérieur) ou "Genre sp." / "Genre spp."
+          → "Genre identifié"
+      - Genre + épithète spécifique (même avec cf. / aff.)
+          → "Identifié"
+      - Vide / inconnu
+          → "Non identifié"
+
+    Exemples :
+      "Cronartium ribicola"   → "Identifié"
+      "Russula cf. emetica"   → "Identifié"
+      "Boletus sp."           → "Genre identifié"
+      "Russula"               → "Genre identifié"
+      "Boletaceae"            → "Groupe identifié"
+      "Agaricomycetes"        → "Groupe identifié"
+      ""                      → "Non identifié"
+    """
+    if not taxon_name or not taxon_name.strip():
+        return "Non identifié"
+
+    parts = [p for p in taxon_name.strip().split() if p]
+    if not parts:
+        return "Non identifié"
+
+    first = parts[0]
+    # 1. Rang supérieur au genre (suffixe standardisé)
+    if any(first.lower().endswith(suf) for suf in _HIGHER_RANK_SUFFIXES):
+        return "Groupe identifié"
+
+    # 2. Genre seul
+    if len(parts) == 1:
+        return "Genre identifié"
+
+    # 3. "Genus sp." / "Genus spp." → genre seul aussi
+    second = parts[1].lower().rstrip(".")
+    if second in ("sp", "spp"):
+        return "Genre identifié"
+
+    # 4. Sinon : Genus + epithète (cf./aff. tolérés, l'épithète est présente)
+    return "Identifié"
+
+
 # --- 3. FONCTION DE LOGIN / PORTAIL ---
 def login_page():
     """
@@ -2171,7 +2232,7 @@ elif nav_mode == "📊 Tableau de Bord":
                     u_data.append({
                         "Import?": default_import,
                         "Déjà importé": statut,
-                        "ID": str(r['id']), 
+                        "ID": str(r['id']),
                         "Taxon": r.get('taxon', {}).get('name') or "Inconnu",
                         "Date": date_str,
                         "Lieu": r.get('place_guess') or "Inconnu",
@@ -2181,6 +2242,7 @@ elif nav_mode == "📊 Tableau de Bord":
                         "Description": desc,
                         "Collection": False,
                         "No° Fongarium": "",
+                        "Identificateur": "",
                         "Lien": obs_url,
                         "_is_new": is_new  # Technical column for robust filtering
                     })
@@ -2364,6 +2426,38 @@ elif nav_mode == "📊 Tableau de Bord":
                      st.session_state.editor_key_version = st.session_state.get('editor_key_version', 0) + 1
                      st.rerun()
     
+        # --- BULK IDENTIFICATEUR PICKER ---
+        # Permet d'appliquer en masse un identificateur à toutes les obs cochées Import?
+        # Économise du clic-par-clic post-import dans Notion.
+        st.markdown("##### 🧑‍🔬 Identificateur")
+        myco_list_for_picker = get_notion_mycologists() or []
+        col_ident_pick, col_ident_btn = st.columns([3, 1])
+        with col_ident_pick:
+            bulk_ident = st.selectbox(
+                "Choisir un mycologue à appliquer aux observations cochées (Import?)",
+                options=[""] + myco_list_for_picker,
+                key="bulk_ident_select",
+            )
+        with col_ident_btn:
+            st.markdown("&nbsp;", unsafe_allow_html=True)  # vertical alignment
+            if st.button("Appliquer", key="bulk_ident_apply", use_container_width=True):
+                if bulk_ident:
+                    mask = st.session_state.main_import_df["Import?"] == True
+                    n_updated = int(mask.sum())
+                    if n_updated > 0:
+                        st.session_state.main_import_df.loc[mask, "Identificateur"] = bulk_ident
+                        st.session_state.editor_key_version = st.session_state.get("editor_key_version", 0) + 1
+                        st.success(f"✅ « {bulk_ident} » appliqué à {n_updated} observation(s).")
+                        st.rerun()
+                    else:
+                        st.warning("Aucune observation cochée Import? — coche-en d'abord.")
+                else:
+                    st.info("Sélectionne un mycologue dans la liste avant d'appliquer.")
+        st.caption(
+            "Tu peux aussi taper un nom libre directement dans la colonne Identificateur "
+            "du tableau ci-dessous, ligne par ligne."
+        )
+
         # --- DATA EDITOR ---
         if 'editor_key_version' not in st.session_state: st.session_state.editor_key_version = 0
         
@@ -2402,6 +2496,14 @@ elif nav_mode == "📊 Tableau de Bord":
                 "Description": st.column_config.TextColumn("Description", disabled=True, width="large"),
                 "Collection": st.column_config.CheckboxColumn("Collection?", default=False, width="small"),
                 "No° Fongarium": st.column_config.TextColumn("No° Fongarium", width="medium"),
+                "Identificateur": st.column_config.TextColumn(
+                    "Identificateur",
+                    width="medium",
+                    help=(
+                        "Mycologue ayant confirmé l'identification. Tape librement OU "
+                        "applique en masse via le sélecteur juste au-dessus du tableau."
+                    ),
+                ),
                 "Lien": st.column_config.LinkColumn("Lien", display_text="Ouvrir", width="small")
             },
             disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "GPS", "Description", "Lien", "Déjà importé"]
@@ -2561,6 +2663,31 @@ elif nav_mode == "📊 Tableau de Bord":
                             )
                             if relation_key:
                                 props[relation_key] = {"relation": [{"id": current_user_portail_page_id}]}
+
+                        # Identificateur (select) — alimenté par le sélecteur bulk ou la colonne éditable.
+                        # Détection dynamique du nom exact pour gérer les variantes de casse.
+                        ident_value = (row.get("Identificateur") or "").strip()
+                        if ident_value:
+                            ident_key = next(
+                                (k for k, v in db_props_schema.items()
+                                 if k.lower() == "identificateur" and v.get("type") == "select"),
+                                None,
+                            )
+                            if ident_key:
+                                props[ident_key] = {"select": {"name": ident_value}}
+
+                        # État d'identification (status) — auto-détecté depuis le nom scientifique.
+                        # Évite à l'utilisateur de cliquer manuellement après chaque import.
+                        etat_value = auto_etat_identification(sci_name)
+                        if etat_value:
+                            etat_key = next(
+                                (k for k, v in db_props_schema.items()
+                                 if "identification" in k.lower() and "tat" in k.lower() and v.get("type") == "status"),
+                                None,
+                            )
+                            if etat_key:
+                                props[etat_key] = {"status": {"name": etat_value}}
+
                         if obs_url: props["URL Inaturalist"] = {"url": obs_url}
                         if photo_files_payload: props["Photo macro"] = {"files": photo_files_payload}
                         

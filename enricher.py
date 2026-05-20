@@ -411,10 +411,11 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         start_t = time.time()
         try:
             # Property IDs : title (Nom latin), hNJw (code_plante),
-            #                oZxm (nom_vernaculaire_fr), %3AUtU (nom_vernaculaire_en)
+            #                oZxm (nom_vernaculaire_fr), %3AUtU (nom_vernaculaire_en),
+            #                %5Esso (synonymes_fr — séparés par , ou ;)
             pages = _query_db_all(
                 token, db_id, session=session,
-                filter_properties=["title", "hNJw", "oZxm", "%3AUtU"],
+                filter_properties=["title", "hNJw", "oZxm", "%3AUtU", "%5Esso"],
             )
             v_latin, v_code, v_fr, v_en = {}, {}, {}, {}
             for p in pages:
@@ -442,6 +443,15 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
                         part = part.strip()
                         if part:
                             v_en[_normalize(part)] = pid
+                # synonymes_fr — alimente la même map fr (priorité au nom canonique
+                # déjà inséré, mais on overwrite si plusieurs synonymes pointent ici —
+                # acceptable car un synonyme unique pointe vers une seule espèce)
+                syn_raw = _get_rich_text(props.get("synonymes_fr", {}))
+                if syn_raw:
+                    for part in re.split(r"[,;]", syn_raw):
+                        part = part.strip()
+                        if part:
+                            v_fr[_normalize(part)] = pid
             print(
                 f"[Notion] Végétation chargée : {len(v_latin)} latins, "
                 f"{len(v_code)} codes, {len(v_fr)} fr, {len(v_en)} en "
