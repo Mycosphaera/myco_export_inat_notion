@@ -2589,7 +2589,8 @@ elif nav_mode == "📊 Tableau de Bord":
                     """
                     sci_name = row["Taxon"]
                     obs_id = str(row["ID"])
-                    
+                    _t_worker_start = time.time()
+
                     # --- DOUBLE SECURITY ---
                     if not row.get("_is_new", True):
                         return None, "⚠️ Importation ignorée (déjà présent sur Notion)"
@@ -2795,13 +2796,16 @@ elif nav_mode == "📊 Tableau de Bord":
                                     # But let's follow the recommendation to check specifically for APIResponseError.
                                     raise e
 
+                        _t_create_start = time.time()
                         new_page = call_notion_with_retry(
                             notion_instance.pages.create,
                             parent={"database_id": fmt_db_id, "type": "database_id"},
                             properties=props,
                             children=children
                         )
-                        
+                        _t_create_elapsed = time.time() - _t_create_start
+                        print(f"[TIMING] obs_id={obs_id} step=pages.create took={_t_create_elapsed:.2f}s")
+
                         p_url = new_page.get('url')
                         page_id = new_page.get('id')
                         
@@ -2824,7 +2828,10 @@ elif nav_mode == "📊 Tableau de Bord":
 
                             if qr_props:
                                 try:
+                                    _t_qr_start = time.time()
                                     call_notion_with_retry(notion_instance.pages.update, page_id=page_id, properties=qr_props)
+                                    _t_qr_elapsed = time.time() - _t_qr_start
+                                    print(f"[TIMING] obs_id={obs_id} step=qr_codes_patch took={_t_qr_elapsed:.2f}s")
                                 except Exception as qr_err:
                                     warning_msg = f"⚠️ Importation réussie mais échec de la mise à jour des QR Codes pour {sci_name} (ID: {obs_id}). Erreur : {qr_err!s}"
                                     return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
@@ -2833,6 +2840,7 @@ elif nav_mode == "📊 Tableau de Bord":
                         if enricher_maps and page_id:
                             try:
                                 inat_taxon_id = obs_obj.get("taxon", {}).get("id")
+                                _t_enrich_start = time.time()
                                 ok_enrich, msg_enrich = enricher.resolve_and_update_relations(
                                     page_id,
                                     sci_name,
@@ -2843,6 +2851,8 @@ elif nav_mode == "📊 Tableau de Bord":
                                     taxon_id=inat_taxon_id,
                                     session=session,
                                 )
+                                _t_enrich_elapsed = time.time() - _t_enrich_start
+                                print(f"[TIMING] obs_id={obs_id} step=enricher_relations took={_t_enrich_elapsed:.2f}s")
                                 if not ok_enrich:
                                     if msg_enrich != "Rien à résoudre":
                                         # Non-fatal warning if enrichment couldn't find a match
@@ -2854,14 +2864,22 @@ elif nav_mode == "📊 Tableau de Bord":
                                 warning_msg = f"⚠️ Importation réussie mais échec de l'enrichissement taxonomique pour {sci_name} (ID: {obs_id}). Erreur : {enrich_err!s}"
                                 return ({"name": sci_name, "id": obs_id, "url": p_url}, warning_msg)
 
+                        _t_worker_total = time.time() - _t_worker_start
+                        print(f"[TIMING] obs_id={obs_id} step=WORKER_TOTAL took={_t_worker_total:.2f}s")
                         return ({"name": sci_name, "id": obs_id, "url": p_url}, None)
 
                     except Exception as e:
+                        _t_worker_total = time.time() - _t_worker_start
+                        print(f"[TIMING] obs_id={obs_id} step=WORKER_TOTAL took={_t_worker_total:.2f}s status=ERROR")
                         return (None, f"{sci_name} (ID: {obs_id}) : {e!s}")
 
                 # --- CHARGEMENT DES MAPS D'ENRICHISSEMENT (Cache 1h) ---
                 if NOTION_TOKEN:
+                    _t_maps_start = time.time()
                     st.session_state.enricher_maps = cached_build_lookup_maps(NOTION_TOKEN)
+                    _t_maps_elapsed = time.time() - _t_maps_start
+                    _cache_status = "HIT" if _t_maps_elapsed < 0.5 else "MISS"
+                    print(f"[TIMING] cached_build_lookup_maps took={_t_maps_elapsed:.2f}s cache_{_cache_status}")
                     errs = st.session_state.enricher_maps.get("_errors", [])
                     if errs:
                         st.warning(f"⚠️ Référentiels partiellement chargés : {', '.join(errs)}")
