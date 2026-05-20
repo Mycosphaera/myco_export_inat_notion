@@ -70,17 +70,32 @@ def _headers(token: str) -> dict:
     }
 
 
-def _query_db_all(token: str, db_id: str, session: requests.Session | None = None, filter_properties: list[str] | None = None) -> list:
-    """Requête paginée sur une DB Notion — retourne toutes les pages avec retry robuste."""
+def _query_db_all(
+    token: str,
+    db_id: str,
+    session: requests.Session | None = None,
+    filter_properties: list[str] | None = None,
+    _fallback_attempted: bool = False,
+) -> list:
+    """Requête paginée sur une DB Notion — retourne toutes les pages avec retry robuste.
+
+    Si `filter_properties` est fourni et que l'API renvoie 400 (typiquement
+    parce qu'un property ID encodé est devenu obsolète après recréation de
+    propriété côté Notion), la fonction se rappelle elle-même UNE fois sans
+    `filter_properties` pour récupérer toutes les propriétés. Cela évite de
+    casser silencieusement le chargement quand Notion recycle des IDs.
+
+    Param interne `_fallback_attempted` : évite la récursion infinie.
+    """
     results = []
     cursor = None
-    
+
     # URL avec filtrage de propriétés si spécifié
     url = f"https://api.notion.com/v1/databases/{db_id}/query"
     if filter_properties:
         params = "&".join([f"filter_properties={p}" for p in filter_properties])
         url = f"{url}?{params}"
-        
+
     requester = session if session else requests
     
     while True:
@@ -115,8 +130,33 @@ def _query_db_all(token: str, db_id: str, session: requests.Session | None = Non
                 resp.raise_for_status()
                 
             except requests.exceptions.HTTPError as e:
-                if e.response is not None and 400 <= e.response.status_code < 500 and e.response.status_code != 429:
-                    raise
+                if e.response is not None:
+                    status = e.response.status_code
+                    # 400 + filter_properties actif → IDs probablement obsolètes.
+                    # Fallback : re-tente UNE fois sans filter_properties.
+                    if (
+                        status == 400
+                        and filter_properties
+                        and not _fallback_attempted
+                    ):
+                        body = (e.response.text or "")[:200]
+                        print(
+                            f"[Notion] DB {db_id[:8]}... : HTTP 400 avec filter_properties "
+                            f"(IDs probablement obsolètes). Re-tentative sans filter_properties.\n"
+                            f"  Réponse Notion : {body}"
+                        )
+                        return _query_db_all(
+                            token, db_id, session=session,
+                            filter_properties=None, _fallback_attempted=True,
+                        )
+                    # 4xx (sauf 429) → re-raise, mais log d'abord pour faciliter le debug
+                    if 400 <= status < 500 and status != 429:
+                        body = (e.response.text or "")[:300]
+                        print(
+                            f"[Notion] HTTPError {status} for {url}\n"
+                            f"  Body: {body}"
+                        )
+                        raise
                 if attempt < 4:
                     time.sleep(2 ** attempt + random.random())
                     continue
@@ -272,7 +312,14 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print(f"[Notion] Chargement de Mycoliste ({db_id})...")
         start_t = time.time()
         try:
-            # Optimisation: On ne récupère que Nom Latin (title), Inat Taxon ID (NmF%3F) et Ancien(s) Nom (%3C~w%5C)
+            # Optimisation : Mycoliste contient 4700+ taxons et est chargée à chaque session
+            # (cache 1h). Récupérer toutes les propriétés ferait ~10× la bande passante pour
+            # 50+ colonnes morphologiques inutilisées par enricher. On filtre donc sur 3 IDs :
+            #   - title    : Nom Latin
+            #   - NmF%3F   : Inat Taxon ID (= `NmF?` décodé)
+            #   - %3C~w%5C : Ancien(s) Nom (= `<~w\` décodé)
+            # Si Notion recycle ces IDs → _query_db_all fait automatiquement un fallback
+            # sans filter_properties (cf. signature de _query_db_all).
             props_to_fetch = ["title", "NmF%3F", "%3C~w%5C"]
             pages = _query_db_all(token, db_id, session=session, filter_properties=props_to_fetch)
             s_map, t_map, o_map = {}, {}, {}
@@ -301,8 +348,9 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print("[Notion] Chargement des Stations...")
         start_t = time.time()
         try:
-            # Optimisation: Titre (title) et Code station (v%3A~~)
-            pages = _query_db_all(token, db_id, session=session, filter_properties=["title", "v%3A~~"])
+            # Pas de filter_properties : les property IDs Notion changent quand
+            # la colonne est recréée. Robustesse > perf sur cette petite BD.
+            pages = _query_db_all(token, db_id, session=session)
             st_map = {}
             for p in pages:
                 props = p["properties"]
@@ -324,8 +372,8 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print("[Notion] Chargement des Habitats...")
         start_t = time.time()
         try:
-            # Optimisation: Titre (title) et Code (L%5DW%40)
-            pages = _query_db_all(token, db_id, session=session, filter_properties=["title", "L%5DW%40"])
+            # Pas de filter_properties : robustesse face aux changements d'ID Notion.
+            pages = _query_db_all(token, db_id, session=session)
             h_map = {}
             for p in pages:
                 code = _get_rich_text(p["properties"].get("Code terrain", {}))
@@ -343,8 +391,8 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         print("[Notion] Chargement des Substrats...")
         start_t = time.time()
         try:
-            # Optimisation: Titre (title) et Code (q_lR)
-            pages = _query_db_all(token, db_id, session=session, filter_properties=["title", "q_lR"])
+            # Pas de filter_properties : robustesse face aux changements d'ID Notion.
+            pages = _query_db_all(token, db_id, session=session)
             su_map = {}
             for p in pages:
                 code = _get_rich_text(p["properties"].get("Code terrain", {}))
