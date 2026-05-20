@@ -154,7 +154,7 @@ def _cached_check_notion_duplicates(ids_tuple, token, db_id, url_property_name):
                     last_resp = None
                     for attempt in range(5):
                         try:
-                            resp = session.post(api_url, json=payload, timeout=20)
+                            resp = session.post(api_url, json=payload, timeout=60)
                             last_resp = resp
                             if resp.status_code == 200:
                                 break
@@ -2153,11 +2153,32 @@ elif nav_mode == "📊 Tableau de Bord":
                 
                 ids_to_check = [str(r['id']) for r in unique_results]
                 current_schema = st.session_state.get('props_schema', {})
+                dedup_check_failed = False
                 try:
                     existing_ids = get_existing_notion_ids(ids_to_check, NOTION_TOKEN, DATABASE_ID, props_schema=current_schema)
-                except Exception as e:
-                    st.error(f"⚠️ Impossible de vérifier les doublons sur Notion. L'importation est bloquée par sécurité. Détails: {e}")
-                    st.stop()
+                except (requests.RequestException, RuntimeError) as e:
+                    # Le pre-check peut timeout sur de gros volumes. Plutôt que bloquer l'import
+                    # complètement, on dégrade : on prévient l'utilisateur que les doublons n'ont
+                    # pas été vérifiés et on décoche tout par défaut pour forcer une décision
+                    # consciente case-par-case.
+                    # Capture ciblée :
+                    #   - requests.RequestException : Timeout, ConnectionError, HTTPError remontés
+                    #     par _cached_check_notion_duplicates après l'épuisement des retries
+                    #   - RuntimeError : "Échec après plusieurs tentatives" + "colonne URL iNat
+                    #     introuvable" (cf. get_existing_notion_ids et _cached_check_notion_duplicates)
+                    # Toute autre exception remonte volontairement pour ne pas masquer un bug.
+                    dedup_check_failed = True
+                    existing_ids = set()
+                    st.warning(
+                        f"⚠️ **Vérification des doublons côté Notion impossible cette fois.** "
+                        f"Cause probable : timeout sur un trop gros volume d'IDs à vérifier (réduis "
+                        f"« Max à récupérer » pour de meilleurs résultats).\n\n"
+                        f"**Tu peux quand même importer**, mais sache que toutes les cases « Importer? » "
+                        f"sont décochées par défaut — coche manuellement les observations que tu "
+                        f"sais ne pas avoir déjà importées. Si tu importes un duplicat, il apparaîtra "
+                        f"comme une 2ème page dans Notion (à supprimer manuellement).\n\n"
+                        f"Détails technique : {e}"
+                    )
                 
                 u_data = []
                 for r in unique_results:
@@ -2198,10 +2219,19 @@ elif nav_mode == "📊 Tableau de Bord":
                     obs_url = r.get('uri') or f"https://www.inaturalist.org/observations/{r['id']}"
                     obs_id_str = str(r['id'])
                     is_new = obs_id_str not in existing_ids
-    
+
+                    # Si le pre-check a échoué, on ne sait pas — coche par défaut à False
+                    # pour forcer une décision manuelle, et marque "?" au lieu de 🟢/🔴.
+                    if dedup_check_failed:
+                        default_import = False
+                        statut = "⚠️ Non vérifié"
+                    else:
+                        default_import = is_new
+                        statut = "🔴 Oui" if not is_new else "🟢 Non"
+
                     u_data.append({
-                        "Import?": is_new,
-                        "Déjà importé": "🔴 Oui" if not is_new else "🟢 Non",
+                        "Import?": default_import,
+                        "Déjà importé": statut,
                         "ID": str(r['id']),
                         "Taxon": r.get('taxon', {}).get('name') or "Inconnu",
                         "Date": date_str,
