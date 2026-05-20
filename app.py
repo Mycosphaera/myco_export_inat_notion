@@ -2442,7 +2442,8 @@ elif nav_mode == "📊 Tableau de Bord":
             st.markdown("&nbsp;", unsafe_allow_html=True)  # vertical alignment
             if st.button("Appliquer", key="bulk_ident_apply", use_container_width=True):
                 if bulk_ident:
-                    mask = st.session_state.main_import_df["Import?"] == True
+                    sync_editor_changes()
+                    mask = st.session_state.main_import_df["Import?"].eq(True).fillna(False)
                     n_updated = int(mask.sum())
                     if n_updated > 0:
                         st.session_state.main_import_df.loc[mask, "Identificateur"] = bulk_ident
@@ -2457,6 +2458,44 @@ elif nav_mode == "📊 Tableau de Bord":
             "Tu peux aussi taper un nom libre directement dans la colonne Identificateur "
             "du tableau ci-dessous, ligne par ligne."
         )
+
+        # --- BOUTON RESTAURER DESCRIPTIONS ---
+        # Permet de récupérer la description originale iNat pour les obs où l'utilisateur
+        # a effacé / modifié par erreur. Lit depuis st.session_state.search_results (cache
+        # iNat de la dernière recherche), pas depuis Notion.
+        st.markdown("##### 📝 Description")
+        col_restore_lbl, col_restore_btn = st.columns([3, 1])
+        with col_restore_lbl:
+            st.caption(
+                "La colonne Description est éditable directement dans le tableau ci-dessous — "
+                "ajoute ou corrige tes codes (*FSL01, #BOJ, !BOM, $BMC, #coll, etc.) avant l'import. "
+                "Le bouton ci-contre restaure le contenu original iNat pour toutes les obs cochées Import?."
+            )
+        with col_restore_btn:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            if st.button("Restaurer depuis iNat", key="restore_descriptions", use_container_width=True):
+                sync_editor_changes()
+                inat_by_id = {str(o.get("id")): o for o in (st.session_state.get("search_results") or [])}
+                df = st.session_state.main_import_df
+                mask = df["Import?"].eq(True).fillna(False)
+                n_restored = 0
+                for idx in df.index[mask]:
+                    obs_id_str = str(df.at[idx, "ID"])
+                    inat_obs = inat_by_id.get(obs_id_str)
+                    if inat_obs is None:
+                        continue
+                    original_desc = inat_obs.get("description") or ""
+                    if df.at[idx, "Description"] != original_desc:
+                        df.at[idx, "Description"] = original_desc
+                        n_restored += 1
+                if n_restored > 0:
+                    st.session_state.editor_key_version = st.session_state.get("editor_key_version", 0) + 1
+                    st.success(f"✅ Description restaurée pour {n_restored} observation(s) cochée(s).")
+                    st.rerun()
+                elif not mask.any():
+                    st.warning("Aucune observation cochée Import? — coche-en d'abord.")
+                else:
+                    st.info("Toutes les descriptions des obs cochées sont déjà identiques à iNat.")
 
         # --- DATA EDITOR ---
         if 'editor_key_version' not in st.session_state: st.session_state.editor_key_version = 0
@@ -2493,7 +2532,16 @@ elif nav_mode == "📊 Tableau de Bord":
                 "Mycologue": st.column_config.TextColumn("User", disabled=True, width="medium"),
                 "Tags": st.column_config.TextColumn("Tags", disabled=True, width="medium"),
                 "GPS": st.column_config.TextColumn("GPS", disabled=True, width="medium"),
-                "Description": st.column_config.TextColumn("Description", disabled=True, width="large"),
+                "Description": st.column_config.TextColumn(
+                    "Description",
+                    width="large",
+                    help=(
+                        "Description iNat (copie du champ Notes). Éditable : tu peux ajouter "
+                        "ou corriger les codes (*FSL01, #BOJ, !BOM, $BMC, #coll, etc.) "
+                        "juste avant l'import sans modifier l'obs côté iNat. "
+                        "Bouton « Restaurer depuis iNat » si tu as effacé par erreur."
+                    ),
+                ),
                 "Collection": st.column_config.CheckboxColumn("Collection?", default=False, width="small"),
                 "No° Fongarium": st.column_config.TextColumn("No° Fongarium", width="medium"),
                 "Identificateur": st.column_config.TextColumn(
@@ -2506,7 +2554,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 ),
                 "Lien": st.column_config.LinkColumn("Lien", display_text="Ouvrir", width="small")
             },
-            disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "GPS", "Description", "Lien", "Déjà importé"]
+            disabled=["ID", "Taxon", "Date", "Lieu", "Mycologue", "Tags", "GPS", "Lien", "Déjà importé"]
         )
         
         # CRITICAL: SYNC EDITS BACK TO MASTER
@@ -2526,9 +2574,10 @@ elif nav_mode == "📊 Tableau de Bord":
         
         # We need to map `main_import_df` (Master) where Import?=True for the final action
         if col_imp.button("📤 Importer vers Notion", type="primary"):
+            sync_editor_changes()
             # Filter Master, not just visible
             master_df = st.session_state.main_import_df
-            to_import_df = master_df[master_df["Import?"]]
+            to_import_df = master_df[master_df["Import?"].eq(True).fillna(False)]
             
             if to_import_df.empty:
                 st.warning("Aucune observation cochée pour l'import.")
@@ -2721,8 +2770,13 @@ elif nav_mode == "📊 Tableau de Bord":
                             if taxon_id_key:
                                 props[taxon_id_key] = {"number": int(inat_taxon_id)}
 
-                        description = obs_obj.get('description', '')
-                        if description: props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
+                        # Description : la version éditée dans le tableau prime — permet d'ajouter
+                        # ou corriger les codes (*FSL01, #BOJ, !BOM, $BMC, etc.) juste avant l'import
+                        # sans devoir modifier l'obs côté iNat. Si l'utilisateur a effacé volontairement,
+                        # on respecte (utiliser le bouton « Restaurer depuis iNat » pour récupérer).
+                        description = (row.get("Description") or "").strip()
+                        if description:
+                            props["Description rapide"] = {"rich_text": [{"text": {"content": description[:2000]}}]}
                         
                         place_guess = obs_obj.get('place_guess', '')
                         if place_guess: props["Repère"] = {"rich_text": [{"text": {"content": place_guess}}]}
