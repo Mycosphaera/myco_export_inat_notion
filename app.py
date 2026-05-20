@@ -2263,7 +2263,12 @@ elif nav_mode == "📊 Tableau de Bord":
     
     
     # --- UNIFIED TABLE INTERFACE ---
-    if 'main_import_df' in st.session_state and not st.session_state.main_import_df.empty:
+    # Wrapped in @st.fragment so that button clicks (cocher, appliquer, restaurer…)
+    # trigger only a fragment rerun — scroll position is preserved between actions.
+    @st.fragment
+    def _render_table_section():
+        if 'main_import_df' not in st.session_state or st.session_state.main_import_df.empty:
+            return
         st.divider()
         
         # 1. FILTERS & CONTROLS
@@ -2340,21 +2345,17 @@ elif nav_mode == "📊 Tableau de Bord":
             visible_indices = df_display.index
             st.session_state.main_import_df.loc[visible_indices, "Import?"] = True
             st.session_state.editor_key_version = st.session_state.get('editor_key_version', 0) + 1
-            st.rerun()
+            st.rerun(scope="fragment")
             
         if col_bulk_r.button("🚫 Tout décocher (Visible)", help="Décoche 'Importer' pour toutes les lignes affichées"):
             visible_indices = df_display.index
             st.session_state.main_import_df.loc[visible_indices, "Import?"] = False
             st.session_state.editor_key_version = st.session_state.get('editor_key_version', 0) + 1
-            st.rerun()
+            st.rerun(scope="fragment")
     
         # --- MAGIC BUTTON (Unified) ---
         col_magic, col_space = st.columns([1, 2])
         if col_magic.button("🪄 Générer les numéros", help="Remplit 'No° Fongarium' pour les lignes cochées 'Collection' (visible uniquement)"):
-             # DEBUG
-             st.write("Button Clicked")
-             st.write(f"Display Len: {len(df_display)}")
-             
              # 1. SYNC STATE FIRST (Capture pending edits from widget before action)
              current_key = f"main_editor_{st.session_state.get('editor_key_version', 0)}"
              editor_state = st.session_state.get(current_key, {})
@@ -2424,7 +2425,7 @@ elif nav_mode == "📊 Tableau de Bord":
                      
                      st.success(f"{processed_count} numéros générés !")
                      st.session_state.editor_key_version = st.session_state.get('editor_key_version', 0) + 1
-                     st.rerun()
+                     st.rerun(scope="fragment")
     
         # --- BULK IDENTIFICATEUR PICKER ---
         # Permet d'appliquer en masse un identificateur à toutes les obs cochées Import?
@@ -2449,7 +2450,7 @@ elif nav_mode == "📊 Tableau de Bord":
                         st.session_state.main_import_df.loc[mask, "Identificateur"] = bulk_ident
                         st.session_state.editor_key_version = st.session_state.get("editor_key_version", 0) + 1
                         st.success(f"✅ « {bulk_ident} » appliqué à {n_updated} observation(s).")
-                        st.rerun()
+                        st.rerun(scope="fragment")
                     else:
                         st.warning("Aucune observation cochée Import? — coche-en d'abord.")
                 else:
@@ -2491,7 +2492,7 @@ elif nav_mode == "📊 Tableau de Bord":
                 if n_restored > 0:
                     st.session_state.editor_key_version = st.session_state.get("editor_key_version", 0) + 1
                     st.success(f"✅ Description restaurée pour {n_restored} observation(s) cochée(s).")
-                    st.rerun()
+                    st.rerun(scope="fragment")
                 elif not mask.any():
                     st.warning("Aucune observation cochée Import? — coche-en d'abord.")
                 else:
@@ -3011,6 +3012,10 @@ elif nav_mode == "📊 Tableau de Bord":
                 
                 if success_log and not error_log:
                     st.balloons()
+
+    # Appel du fragment — chaque action dans le tableau ne recharge que cette section,
+    # ce qui préserve la position du scroll dans la page.
+    _render_table_section()
 
     with tab5:
         st.header("🧹 Nettoyeur CSV pour Notion")
