@@ -2497,6 +2497,65 @@ elif nav_mode == "📊 Tableau de Bord":
                 else:
                     st.info("Toutes les descriptions des obs cochées sont déjà identiques à iNat.")
 
+        # --- AJOUT EN LOT — DESCRIPTION ---
+        # Permet d'ajouter un code (station, taxon, habitat…) en tête ou en fin
+        # de la description de toutes les observations cochées Import? en une seule action.
+        st.markdown("##### 🏷️ Ajout en lot — Description")
+        col_bulk_desc, col_bulk_pre, col_bulk_app = st.columns([3, 1, 1])
+        with col_bulk_desc:
+            bulk_desc_token = st.text_input(
+                "Code ou texte à ajouter aux obs cochées (Import?)",
+                placeholder="ex: *FSL01  #BOJ  !BOM  $BMC  #coll …",
+                key="bulk_desc_token_input",
+            )
+        with col_bulk_pre:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            if st.button("⬆ En tête", key="bulk_desc_prepend", use_container_width=True):
+                token = (bulk_desc_token or "").strip()
+                if token:
+                    sync_editor_changes()
+                    mask = st.session_state.main_import_df["Import?"].eq(True).fillna(False)
+                    n = int(mask.sum())
+                    if n > 0:
+                        def _prepend_desc(val, _tok=token):
+                            s = val if isinstance(val, str) else ""
+                            return (_tok + " " + s).strip() if s else _tok
+                        st.session_state.main_import_df.loc[mask, "Description"] = (
+                            st.session_state.main_import_df.loc[mask, "Description"].apply(_prepend_desc)
+                        )
+                        st.session_state.editor_key_version = st.session_state.get("editor_key_version", 0) + 1
+                        st.success(f"✅ « {token} » ajouté en tête de {n} observation(s).")
+                        st.rerun()
+                    else:
+                        st.warning("Aucune observation cochée Import? — coche-en d'abord.")
+                else:
+                    st.info("Saisis un code avant d'appliquer.")
+        with col_bulk_app:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            if st.button("⬇ En fin", key="bulk_desc_append", use_container_width=True):
+                token = (bulk_desc_token or "").strip()
+                if token:
+                    sync_editor_changes()
+                    mask = st.session_state.main_import_df["Import?"].eq(True).fillna(False)
+                    n = int(mask.sum())
+                    if n > 0:
+                        def _append_desc(val, _tok=token):
+                            s = val if isinstance(val, str) else ""
+                            return (s + " " + _tok).strip() if s else _tok
+                        st.session_state.main_import_df.loc[mask, "Description"] = (
+                            st.session_state.main_import_df.loc[mask, "Description"].apply(_append_desc)
+                        )
+                        st.session_state.editor_key_version = st.session_state.get("editor_key_version", 0) + 1
+                        st.success(f"✅ « {token} » ajouté en fin de {n} observation(s).")
+                        st.rerun()
+                    else:
+                        st.warning("Aucune observation cochée Import? — coche-en d'abord.")
+                else:
+                    st.info("Saisis un code avant d'appliquer.")
+        st.caption(
+            "S'applique à toutes les obs cochées Import? — y compris celles masquées par les filtres de date / limite."
+        )
+
         # --- DATA EDITOR ---
         if 'editor_key_version' not in st.session_state: st.session_state.editor_key_version = 0
         
