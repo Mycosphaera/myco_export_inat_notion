@@ -2574,9 +2574,10 @@ elif nav_mode == "📊 Tableau de Bord":
         
         # We need to map `main_import_df` (Master) where Import?=True for the final action
         if col_imp.button("📤 Importer vers Notion", type="primary"):
+            sync_editor_changes()
             # Filter Master, not just visible
             master_df = st.session_state.main_import_df
-            to_import_df = master_df[master_df["Import?"]]
+            to_import_df = master_df[master_df["Import?"].eq(True).fillna(False)]
             
             if to_import_df.empty:
                 st.warning("Aucune observation cochée pour l'import.")
