@@ -40,6 +40,25 @@ def _get_notion_secret(*keys):
     return None
 
 
+def _format_notion_db_id(db_id):
+    """
+    Nettoie et formate un ID Notion au format UUID standard (8-4-4-4-12).
+
+    Retourne None si db_id est falsy, n'est pas une string, ou ne peut pas
+    être nettoyé en 32 caractères hexadécimaux — ce qui permet au caller
+    d'afficher un message d'erreur clair plutôt que de laisser re.sub() planter
+    avec un TypeError quand les secrets Streamlit ne sont pas chargés.
+    """
+    if not db_id or not isinstance(db_id, str):
+        return None
+    cleaned = re.sub(r'[^a-fA-F0-9]', '', db_id)
+    if len(cleaned) == 32:
+        return f"{cleaned[:8]}-{cleaned[8:12]}-{cleaned[12:16]}-{cleaned[16:20]}-{cleaned[20:]}"
+    # Fallback historique : laisser passer la valeur nettoyée même si pas 32 chars
+    # (l'API Notion renverra une erreur 400 plus parlante côté serveur).
+    return cleaned or None
+
+
 try:
     NOTION_TOKEN = _get_notion_secret("token", "NOTION_TOKEN")
     DATABASE_ID  = _get_notion_secret("database_id", "DATABASE_ID")
@@ -3015,8 +3034,14 @@ elif nav_mode == "📊 Tableau de Bord":
                     st.stop()
 
                 # Pre-calculate formatted Database ID once
-                clean_id_imp = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
-                formatted_db_id = f"{clean_id_imp[:8]}-{clean_id_imp[8:12]}-{clean_id_imp[12:16]}-{clean_id_imp[16:20]}-{clean_id_imp[20:]}" if len(clean_id_imp) == 32 else clean_id_imp
+                formatted_db_id = _format_notion_db_id(DATABASE_ID)
+                if not formatted_db_id:
+                    st.error(
+                        "⚠️ Configuration Notion indisponible (DATABASE_ID non chargé). "
+                        "Rafraîchis la page complètement (Ctrl+Shift+R) et réessaie. "
+                        "Si le problème persiste, contacte Mathias."
+                    )
+                    st.stop()
 
                 with requests.Session() as s:
                     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -3234,12 +3259,13 @@ elif nav_mode == "📊 Tableau de Bord":
                     progress_bar.progress(current / total if total else 1)
                     status_text.text(f"Traitement… {current}/{total}")
 
-                clean_obs_id = re.sub(r'[^a-fA-F0-9]', '', DATABASE_ID)
-                fmt_obs_id = (
-                    f"{clean_obs_id[:8]}-{clean_obs_id[8:12]}-{clean_obs_id[12:16]}-"
-                    f"{clean_obs_id[16:20]}-{clean_obs_id[20:]}"
-                    if len(clean_obs_id) == 32 else clean_obs_id
-                )
+                fmt_obs_id = _format_notion_db_id(DATABASE_ID)
+                if not fmt_obs_id:
+                    st.error(
+                        "⚠️ Configuration Notion indisponible (DATABASE_ID non chargé). "
+                        "Rafraîchis la page complètement (Ctrl+Shift+R) et réessaie."
+                    )
+                    st.stop()
 
                 with st.spinner("Résolution en cours…"):
                     try:
