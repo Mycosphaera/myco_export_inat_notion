@@ -72,7 +72,10 @@ def validate_inat_username(username: str | None, *, session=None, timeout: float
     try:
         resp = getter(
             _INAT_AUTOCOMPLETE_URL,
-            params={"q": candidate, "per_page": 10},
+            # Fenêtre large : l'autocomplete classe par pertinence ; on l'élargit
+            # pour ne pas rater le match EXACT si des logins proches sont mieux
+            # classés (cf. revue CodeRabbit PR #29).
+            params={"q": candidate, "per_page": 30},
             headers={"User-Agent": _USER_AGENT},
             timeout=timeout,
         )

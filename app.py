@@ -1076,11 +1076,16 @@ if nav_mode == "👤 Mon Profil":
         save_profile = st.form_submit_button("Enregistrer les modifications")
         
         if save_profile:
-            # Validation du pseudo iNat AVANT toute écriture : un courriel ou un
-            # pseudo introuvable casserait les recherches (422). On bloque la
-            # sauvegarde tant que ce n'est pas valide, et on stocke la casse
-            # officielle renvoyée par iNat.
-            inat_login, inat_err = validate_inat_username(new_inat)
+            # On ne valide le pseudo iNat que s'il a CHANGÉ : sinon l'édition des
+            # autres champs (bio, photo, réseaux) serait bloquée quand l'API iNat
+            # est lente/indisponible, et on ferait un appel réseau inutile. Un
+            # pseudo invalide déjà stocké reste signalé par le bandeau du dashboard.
+            # On stocke la casse officielle renvoyée par iNat.
+            old_inat = (u_data.get("inat_username", "") or "").strip()
+            if (new_inat or "").strip() == old_inat:
+                inat_login, inat_err = old_inat, None
+            else:
+                inat_login, inat_err = validate_inat_username(new_inat)
             if inat_err:
                 st.error(inat_err)
             else:
@@ -1103,9 +1108,19 @@ if nav_mode == "👤 Mon Profil":
                     st.session_state.user_info.update(updates)
                     st.session_state.username = new_notion
                     st.session_state.inat_username = inat_login
-                    # Recale le filtre de recherche sur le pseudo corrigé pour que
-                    # le fix prenne effet SANS attendre une reconnexion.
-                    st.session_state.selected_users = [inat_login]
+                    # Recale le filtre « Personne » SANS écraser les collègues
+                    # déjà sélectionnés : on remplace l'ancien pseudo par le
+                    # nouveau (ou on l'ajoute), puis on dédoublonne (ordre gardé).
+                    sel = list(st.session_state.get("selected_users", []) or [])
+                    if old_inat and old_inat in sel:
+                        sel = [inat_login if u == old_inat else u for u in sel]
+                    elif inat_login and inat_login not in sel:
+                        sel.append(inat_login)
+                    deduped = []
+                    for u in sel:
+                        if u and u not in deduped:
+                            deduped.append(u)
+                    st.session_state.selected_users = deduped
                     st.rerun()
                 else:
                     st.error(f"Erreur : {res}")
