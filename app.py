@@ -7,6 +7,7 @@ from notion_client.errors import APIResponseError
 from datetime import date, timedelta
 from labels import generate_label_pdf
 from database import get_user_by_email, create_user_profile, log_action, update_user_profile
+from inat_validation import validate_inat_username, looks_like_invalid_inat_username
 
 import re
 import time
@@ -523,7 +524,13 @@ def login_page():
                         st.warning("⚠️ Impossible de charger la liste Notion (droits insuffisants ?). Entrez votre nom manuellement.")
                         reg_notion_name = st.text_input("Votre Nom sur Notion (Mycologue)")
 
-                    reg_inat = st.text_input("Votre Nom d'utilisateur iNaturalist")
+                    reg_inat = st.text_input(
+                        "Votre Nom d'utilisateur iNaturalist",
+                        help="Ton pseudo iNaturalist (le nom dans l'URL de ton "
+                             "profil : inaturalist.org/people/TON-PSEUDO). "
+                             "⚠️ Pas ton courriel — sinon les recherches iNat "
+                             "échoueront.",
+                    )
 
                     # Sélection de la page Portail du mycologue (obligatoire)
                     st.markdown("**Votre page Portail du mycologue sur Notion**")
@@ -553,16 +560,22 @@ def login_page():
                         )
 
                     if st.form_submit_button("Finaliser mon portail"):
+                        # Validation du pseudo iNat AVANT création : on ne veut
+                        # jamais stocker un courriel/pseudo invalide qui casserait
+                        # toutes les recherches (422). On retient la casse officielle.
+                        inat_login, inat_err = validate_inat_username(reg_inat)
                         if not reg_inat or not reg_notion_name:
                             st.warning("Tout remplir SVP.")
                         elif portail_pages and not reg_portail_page_id:
                             st.warning("Sélectionne ta page Portail du mycologue dans la liste.")
+                        elif inat_err:
+                            st.error(inat_err)
                         else:
-                            # On utilise reg_email du state
+                            # On utilise reg_email du state ; pseudo = login validé.
                             success = create_user_profile(
                                 st.session_state.reg_email,
                                 reg_notion_name,
-                                reg_inat,
+                                inat_login,
                                 notion_portail_page_id=reg_portail_page_id,
                             )
                             if success:
@@ -1045,7 +1058,12 @@ if nav_mode == "👤 Mon Profil":
         col_p1, col_p2 = st.columns(2)
         with col_p1:
             new_notion = st.text_input("Nom Notion", value=u_data.get("notion_user_name", ""), help="Utilisé pour pré-remplir les filtres Notion.")
-            new_inat = st.text_input("Utilisateur iNaturalist", value=u_data.get("inat_username", ""), help="Utilisé pour pré-remplir les recherches iNat.")
+            new_inat = st.text_input(
+                "Utilisateur iNaturalist",
+                value=u_data.get("inat_username", ""),
+                help="Ton pseudo iNaturalist (nom dans l'URL de ton profil : "
+                     "inaturalist.org/people/TON-PSEUDO). ⚠️ Pas ton courriel.",
+            )
         
         with col_p2:
             # New Fields (Optional, might error if cols missing)
@@ -1058,31 +1076,42 @@ if nav_mode == "👤 Mon Profil":
         save_profile = st.form_submit_button("Enregistrer les modifications")
         
         if save_profile:
-            # Prepare updates
-            updates = {
-                "notion_user_name": new_notion,
-                "inat_username": new_inat
-            }
-            # Try to add optional fields to update dict
-            if new_prefix: updates["fongarium_prefix"] = new_prefix
-            if new_photo: updates["photo_url"] = new_photo
-            if new_bio:   updates["bio"] = new_bio
-            if new_fb:    updates["social_fb"] = new_fb
-            if new_insta: updates["social_insta"] = new_insta
-            
-            res = update_user_profile(u_data["id"], updates)
-            if res is True:
-                st.success("Profil mis à jour ! Re-connectez vous pour voir tous les changements.")
-                # Update local session mostly for display
-                st.session_state.user_info.update(updates)
-                st.session_state.username = new_notion
-                st.session_state.inat_username = new_inat
-                st.rerun()
+            # Validation du pseudo iNat AVANT toute écriture : un courriel ou un
+            # pseudo introuvable casserait les recherches (422). On bloque la
+            # sauvegarde tant que ce n'est pas valide, et on stocke la casse
+            # officielle renvoyée par iNat.
+            inat_login, inat_err = validate_inat_username(new_inat)
+            if inat_err:
+                st.error(inat_err)
             else:
-                st.error(f"Erreur : {res}")
-                if "column" in str(res).lower() and "does not exist" in str(res).lower():
-                    st.warning("⚠️ Il semble que votre base Supabase n'ait pas les colonnes pour la photo ou la bio.")
-                    st.code("""ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS photo_url text;
+                # Prepare updates
+                updates = {
+                    "notion_user_name": new_notion,
+                    "inat_username": inat_login
+                }
+                # Try to add optional fields to update dict
+                if new_prefix: updates["fongarium_prefix"] = new_prefix
+                if new_photo: updates["photo_url"] = new_photo
+                if new_bio:   updates["bio"] = new_bio
+                if new_fb:    updates["social_fb"] = new_fb
+                if new_insta: updates["social_insta"] = new_insta
+
+                res = update_user_profile(u_data["id"], updates)
+                if res is True:
+                    st.success("Profil mis à jour ! Re-connectez vous pour voir tous les changements.")
+                    # Update local session mostly for display
+                    st.session_state.user_info.update(updates)
+                    st.session_state.username = new_notion
+                    st.session_state.inat_username = inat_login
+                    # Recale le filtre de recherche sur le pseudo corrigé pour que
+                    # le fix prenne effet SANS attendre une reconnexion.
+                    st.session_state.selected_users = [inat_login]
+                    st.rerun()
+                else:
+                    st.error(f"Erreur : {res}")
+                    if "column" in str(res).lower() and "does not exist" in str(res).lower():
+                        st.warning("⚠️ Il semble que votre base Supabase n'ait pas les colonnes pour la photo ou la bio.")
+                        st.code("""ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS photo_url text;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS bio text;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS social_fb text;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS social_insta text;
@@ -1098,6 +1127,20 @@ elif nav_mode == "📊 Tableau de Bord":
         <p class="subtitle">Gestionnaire d'observations & passerelle Notion</p>
     </div>
     """, unsafe_allow_html=True)
+
+    # --- ALERTE PSEUDO iNAT MANQUANT / INVALIDE ---
+    # Capte aussi les profils DÉJÀ cassés (ex. un courriel stocké avant l'ajout
+    # de la validation à l'inscription) : sans pseudo valide, toute recherche
+    # iNaturalist échoue en 422. Heuristique sans réseau (pas d'appel API ici).
+    if looks_like_invalid_inat_username(st.session_state.get("inat_username", "")):
+        st.warning(
+            "**Ton pseudo iNaturalist n'est pas configuré (ou semble invalide).** "
+            "Les recherches iNaturalist échoueront tant que ce n'est pas corrigé.\n\n"
+            "👉 Ouvre **« 👤 Mon Profil »** (menu de gauche) et entre ton "
+            "**pseudo iNaturalist** — le nom dans l'URL de ton profil "
+            "(`inaturalist.org/people/TON-PSEUDO`), **pas ton courriel**.",
+            icon="⚠️",
+        )
 
     # --- DASHBOARD STATS ---
     if st.session_state.authenticated:
@@ -1789,41 +1832,18 @@ elif nav_mode == "📊 Tableau de Bord":
                 
                 if c_usr_add.button("➕", help="Ajouter l'utilisateur"):
                     if new_user:
-                        try:
-                            # Validate against API using Requests directly
-                            # iNaturalist API v1 search
-                            url = f"https://api.inaturalist.org/v1/users/autocomplete?q={new_user}&per_page=5"
-                            headers = {"User-Agent": "StreamlitMycoImport/1.0 (mathieu@example.com)"}
-                            resp = requests.get(url, headers=headers, timeout=10)
-                            
-                            if resp.status_code == 200:
-                                data = resp.json()
-                            else:
-                                st.error(f"Erreur HTTP {resp.status_code} de l'API iNaturalist.")
-                                data = {}
-                            
-                            # Check exact match or close enough (API fuzzy searches)
-                            valid_user = None
-                            if 'results' in data and data['results']:
-                                # Check strict case-insensitive match
-                                matches = [u['login'] for u in data['results'] if u['login'].lower() == new_user.lower()]
-                                if matches:
-                                    valid_user = matches[0]
-                                else:
-                                     # Optional: If exact match not found but results exist, could suggest?
-                                     pass
-                            
-                            if valid_user:
-                                if valid_user not in st.session_state.selected_users:
-                                    st.session_state.selected_users.append(valid_user)
-                                    st.success(f"Ajouté : {valid_user}")
-                                    st.rerun()
-                                else:
-                                    st.warning("Déjà ajouté.")
-                            else:
-                                st.error(f"Utilisateur '{new_user}' introuvable sur iNaturalist.")
-                        except Exception as e:
-                            st.error(f"Erreur API: {e}")
+                        # Validation centralisée (cf. inat_validation) : même règle
+                        # qu'à l'inscription et au profil — refuse les courriels et
+                        # les pseudos inexistants, retient la casse officielle iNat.
+                        valid_user, add_err = validate_inat_username(new_user)
+                        if add_err:
+                            st.error(add_err)
+                        elif valid_user in st.session_state.selected_users:
+                            st.warning("Déjà ajouté.")
+                        else:
+                            st.session_state.selected_users.append(valid_user)
+                            st.success(f"Ajouté : {valid_user}")
+                            st.rerun()
     
                 # Display Selected Users
                 if st.session_state.selected_users:
@@ -2069,16 +2089,27 @@ elif nav_mode == "📊 Tableau de Bord":
                 else:
                     fetch_limit = 10000 # "Tout" -> large number
                     
-                params = {
-                    "user_id": user_list,
-                    "d1": d1, 
-                    "d2": d2, 
-                    "taxon_id": taxon_id, 
-                    "place_id": selected_place_id,
-                    "per_page": 200 # Request max allowed per page
-                }
-                run_search = True
-    
+                # Garde-fou : un pseudo manifestement invalide (courriel, espace)
+                # dans le filtre « Personne » ferait échouer la requête iNat en 422.
+                # On bloque AVANT l'appel réseau pour éviter l'erreur cryptique.
+                bad_users = [u for u in user_list if looks_like_invalid_inat_username(u)]
+                if bad_users:
+                    st.error(
+                        "Pseudo iNaturalist invalide dans le filtre « Personne » : "
+                        f"{', '.join(bad_users)}. Corrige-le dans « 👤 Mon Profil » "
+                        "(ton pseudo iNat, pas ton courriel) ou retire-le de la liste."
+                    )
+                else:
+                    params = {
+                        "user_id": user_list,
+                        "d1": d1,
+                        "d2": d2,
+                        "taxon_id": taxon_id,
+                        "place_id": selected_place_id,
+                        "per_page": 200 # Request max allowed per page
+                    }
+                    run_search = True
+
     with tab2:
         with st.container(border=True):
             ids_input = st.text_area("IDs (séparés par virgules ou sauts de ligne)")
@@ -2275,7 +2306,19 @@ elif nav_mode == "📊 Tableau de Bord":
                 if not unique_results:
                     st.warning("Aucune observation trouvée.")
             except Exception as e:
-                st.error(f"Erreur iNaturalist : {e}")
+                # Un 422 sur /observations vient quasi toujours d'un `user_id`
+                # invalide (courriel/pseudo inexistant). On traduit l'erreur brute
+                # en message actionnable plutôt que d'afficher le HTTP 422 cru.
+                err_txt = str(e)
+                if "422" in err_txt or "Unprocessable" in err_txt:
+                    st.error(
+                        "La recherche a échoué (**422**) — c'est presque toujours un "
+                        "**pseudo iNaturalist invalide** dans le filtre « Personne » "
+                        "(souvent un courriel à la place du pseudo). Vérifie-le dans "
+                        "« 👤 Mon Profil ». Détail technique : " + err_txt
+                    )
+                else:
+                    st.error(f"Erreur iNaturalist : {e}")
                 st.session_state.search_results = []
                 st.session_state.main_import_df = pd.DataFrame() # Empty fallback
     
