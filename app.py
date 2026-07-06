@@ -6,8 +6,9 @@ from notion_client import Client
 from notion_client.errors import APIResponseError
 from datetime import date, timedelta
 from labels import generate_label_pdf
-from database import get_user_by_email, create_user_profile, log_action, update_user_profile
+from database import get_user_by_email, create_user_profile, log_action, update_user_profile, get_taken_fongarium_prefixes
 from inat_validation import validate_inat_username, resolve_inat_identity, looks_like_invalid_inat_username, resolve_search_user_id
+from fongarium import suggest_fongarium_prefix
 
 import re
 import time
@@ -669,6 +670,12 @@ def portail_setup_gate():
                 default_idx = i + 1
                 break
 
+    # Préfixe Fongarium : préfixes déjà pris (unicité) + suggestion d'après le nom.
+    taken_prefixes = get_taken_fongarium_prefixes(exclude_user_id=user_info.get("id"))
+    suggested_prefix = suggest_fongarium_prefix(
+        user_info.get("notion_user_name") or "", taken_prefixes
+    )
+
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.form("portail_setup_form"):
@@ -684,12 +691,17 @@ def portail_setup_gate():
             )
             prefix_input = st.text_input(
                 "Ton préfixe Fongarium",
-                value=(user_info.get("fongarium_prefix") or ""),
+                value=(user_info.get("fongarium_prefix") or suggested_prefix),
                 max_chars=8,
                 placeholder="ex: MRD",
-                help="Identifiant court (3-4 lettres) qui préfixe tes numéros de "
-                     "fongarium (MRD0001, MRD0002…).",
+                help=(
+                    "Les INITIALES de ton nom, en majuscules — ex. « Mathias "
+                    "Rocheleau-Duplain » → MRD. Il préfixe tes numéros de fongarium "
+                    "(MRD0001…) et doit être UNIQUE (pas déjà pris par un autre membre)."
+                ),
             )
+            if suggested_prefix:
+                st.caption(f"💡 Suggestion d'après ton nom : **{suggested_prefix}** (modifiable)")
             confirm = st.form_submit_button("Enregistrer et continuer", type="primary")
             if confirm:
                 prefix_clean = (prefix_input or "").strip().upper()
@@ -697,6 +709,14 @@ def portail_setup_gate():
                     st.warning("Sélectionne ta page Portail dans la liste avant de continuer.")
                 elif not prefix_clean:
                     st.warning("Entre ton préfixe Fongarium (ex: MRD) pour continuer.")
+                elif prefix_clean in taken_prefixes:
+                    _alt = suggest_fongarium_prefix(
+                        user_info.get("notion_user_name") or "", taken_prefixes | {prefix_clean}
+                    )
+                    st.error(
+                        f"⚠️ Le préfixe « {prefix_clean} » est déjà utilisé par un autre "
+                        "membre. " + (f"Essaie plutôt **{_alt}**." if _alt else "Choisis-en un autre.")
+                    )
                 else:
                     selected = choice
                     user_id = user_info.get("id")
@@ -1129,7 +1149,7 @@ if nav_mode == "👤 Mon Profil":
         
         with col_p2:
             # New Fields (Optional, might error if cols missing)
-            new_prefix = st.text_input("Préfixe Fongarium", value=u_data.get("fongarium_prefix", ""), placeholder="ex: MRD", help="Identifiant de 3-4 lettres")
+            new_prefix = st.text_input("Préfixe Fongarium", value=u_data.get("fongarium_prefix", ""), placeholder="ex: MRD", help="Initiales de ton nom (ex: « Mathias Rocheleau-Duplain » → MRD). Doit être UNIQUE entre membres.")
             new_photo = st.text_input("URL Photo de Profil", value=u_data.get("photo_url", ""), placeholder="https://...")
             new_bio = st.text_area("Bio / Description", value=u_data.get("bio", ""), placeholder="Mycologue passionné...")
             new_fb = st.text_input("Lien Facebook", value=u_data.get("social_fb", ""), placeholder="https://facebook.com/...")
@@ -1150,8 +1170,22 @@ if nav_mode == "👤 Mon Profil":
                 inat_login, inat_err = old_inat, None
             else:
                 inat_login, inat_uid_val, inat_err = resolve_inat_identity(new_inat)
+            new_prefix_clean = (new_prefix or "").strip().upper()
+            other_prefixes = (
+                get_taken_fongarium_prefixes(exclude_user_id=u_data.get("id"))
+                if new_prefix_clean else set()
+            )
             if inat_err:
                 st.error(inat_err)
+            elif new_prefix_clean and new_prefix_clean in other_prefixes:
+                _alt = suggest_fongarium_prefix(
+                    new_notion or u_data.get("notion_user_name") or "",
+                    other_prefixes | {new_prefix_clean},
+                )
+                st.error(
+                    f"⚠️ Le préfixe « {new_prefix_clean} » est déjà utilisé par un "
+                    "autre membre. " + (f"Essaie **{_alt}**." if _alt else "Choisis-en un autre.")
+                )
             else:
                 # Prepare updates
                 updates = {
@@ -1164,7 +1198,7 @@ if nav_mode == "👤 Mon Profil":
                 if pseudo_changed:
                     updates["inat_user_id"] = inat_uid_val or None
                 # Try to add optional fields to update dict
-                if new_prefix: updates["fongarium_prefix"] = new_prefix
+                if new_prefix_clean: updates["fongarium_prefix"] = new_prefix_clean
                 if new_photo: updates["photo_url"] = new_photo
                 if new_bio:   updates["bio"] = new_bio
                 if new_fb:    updates["social_fb"] = new_fb
