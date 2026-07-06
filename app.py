@@ -580,6 +580,10 @@ def login_page():
                             page_uid = (portail_choice.get("inat_user_id") or "").strip()
                         if page_login:
                             inat_login, inat_err = page_login, None
+                        elif page_uid:
+                            # La page fournit l'ID numérique (ancre suffisante) sans
+                            # login → inutile d'exiger un pseudo saisi ; l'ID seul suffit.
+                            inat_login, inat_err = "", None
                         else:
                             inat_login, inat_err = validate_inat_username(reg_inat)
 
@@ -1303,7 +1307,10 @@ elif nav_mode == "📊 Tableau de Bord":
     # Capte aussi les profils DÉJÀ cassés (ex. un courriel stocké avant l'ajout
     # de la validation à l'inscription) : sans pseudo valide, toute recherche
     # iNaturalist échoue en 422. Heuristique sans réseau (pas d'appel API ici).
-    if looks_like_invalid_inat_username(st.session_state.get("inat_username", "")):
+    # On ne prévient PAS si un ID numérique valide est présent : la recherche
+    # passe alors par l'ID (jamais de 422), le pseudo textuel devient accessoire.
+    _inat_uid_ok = (st.session_state.get("inat_user_id") or "").strip().isdigit()
+    if looks_like_invalid_inat_username(st.session_state.get("inat_username", "")) and not _inat_uid_ok:
         st.warning(
             "**Ton pseudo iNaturalist n'est pas configuré (ou semble invalide).** "
             "Les recherches iNaturalist échoueront tant que ce n'est pas corrigé.\n\n"
