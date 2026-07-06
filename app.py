@@ -1198,7 +1198,8 @@ if nav_mode == "👤 Mon Profil":
                 if pseudo_changed:
                     updates["inat_user_id"] = inat_uid_val or None
                 # Try to add optional fields to update dict
-                if new_prefix_clean: updates["fongarium_prefix"] = new_prefix_clean
+                if new_prefix_clean:
+                    updates["fongarium_prefix"] = new_prefix_clean
                 if new_photo: updates["photo_url"] = new_photo
                 if new_bio:   updates["bio"] = new_bio
                 if new_fb:    updates["social_fb"] = new_fb

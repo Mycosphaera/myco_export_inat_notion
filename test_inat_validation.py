@@ -36,7 +36,7 @@ class _FakeSession:
         self.called = True
         # iNat renvoie un id numérique par résultat → on le simule (1000+i).
         return _FakeResp(
-            {"results": [{"login": l, "id": 1000 + i} for i, l in enumerate(self._logins)]}
+            {"results": [{"login": login, "id": 1000 + i} for i, login in enumerate(self._logins)]}
         )
 
 
