@@ -152,3 +152,26 @@ def update_user_profile(user_id, updates):
             except Exception as e2:
                 return f"Erreur lors de la mise à jour: {e2}"
         return f"Erreur lors de la mise à jour: {e}"
+
+
+def get_taken_fongarium_prefixes(exclude_user_id=None):
+    """Ensemble (MAJUSCULES) des préfixes Fongarium déjà utilisés par d'AUTRES
+    utilisateurs — sert à empêcher les collisions. `exclude_user_id` = l'id du
+    profil courant (on ne se compte pas soi-même). En cas d'erreur de lecture,
+    renvoie un ensemble vide (on ne bloque personne sur une panne).
+    """
+    if not supabase:
+        return set()
+    try:
+        resp = supabase.table("user_profiles").select("id, fongarium_prefix").execute()
+        taken = set()
+        for row in (resp.data or []):
+            if exclude_user_id is not None and row.get("id") == exclude_user_id:
+                continue
+            pfx = (row.get("fongarium_prefix") or "").strip().upper()
+            if pfx:
+                taken.add(pfx)
+        return taken
+    except Exception as e:
+        print(f"Erreur get_taken_fongarium_prefixes: {e}")
+        return set()

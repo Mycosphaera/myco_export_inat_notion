@@ -6,8 +6,9 @@ from notion_client import Client
 from notion_client.errors import APIResponseError
 from datetime import date, timedelta
 from labels import generate_label_pdf
-from database import get_user_by_email, create_user_profile, log_action, update_user_profile
-from inat_validation import validate_inat_username, looks_like_invalid_inat_username, resolve_search_user_id
+from database import get_user_by_email, create_user_profile, update_user_profile, get_taken_fongarium_prefixes
+from inat_validation import validate_inat_username, resolve_inat_identity, looks_like_invalid_inat_username, resolve_search_user_id
+from fongarium import suggest_fongarium_prefix
 
 import re
 import time
@@ -578,6 +579,7 @@ def login_page():
                         if reg_portail_page_id and portail_choice:
                             page_login = (portail_choice.get("inat_login") or "").strip()
                             page_uid = (portail_choice.get("inat_user_id") or "").strip()
+                        inat_uid_val = ""
                         if page_login:
                             inat_login, inat_err = page_login, None
                         elif page_uid:
@@ -585,7 +587,9 @@ def login_page():
                             # login → inutile d'exiger un pseudo saisi ; l'ID seul suffit.
                             inat_login, inat_err = "", None
                         else:
-                            inat_login, inat_err = validate_inat_username(reg_inat)
+                            # Saisie manuelle : on valide ET on capte l'ID numérique
+                            # (l'autocomplete le renvoie) → ancre robuste même sans page.
+                            inat_login, inat_uid_val, inat_err = resolve_inat_identity(reg_inat)
 
                         if not reg_notion_name:
                             st.warning("Tout remplir SVP.")
@@ -602,7 +606,7 @@ def login_page():
                                 reg_notion_name,
                                 inat_login,
                                 notion_portail_page_id=reg_portail_page_id,
-                                inat_user_id=page_uid,
+                                inat_user_id=(page_uid or inat_uid_val),
                             )
                             if success:
                                 st.balloons()
@@ -628,19 +632,18 @@ def portail_setup_gate():
     utilisateurs existants doivent passer par cet écran à leur prochaine connexion.
     """
     user_info = st.session_state.get("user_info", {}) or {}
-    if user_info.get("notion_portail_page_id"):
-        return  # déjà configuré, accès normal
+    if user_info.get("notion_portail_page_id") and (user_info.get("fongarium_prefix") or "").strip():
+        return  # page liée + préfixe défini → accès normal
 
     st.markdown("""
-    <h2 style='text-align: center; color: #2E8B57;'>🔗 Une dernière étape</h2>
+    <h2 style='text-align: center; color: #2E8B57;'>🔗 Complète ton profil</h2>
     <p style='text-align: center;'>
-        On a ajouté une nouvelle fonctionnalité : chaque observation importée
-        est automatiquement liée à <strong>ta page Portail du mycologue sur Notion</strong>
-        via la colonne <code>Mycologue (relation)</code>.
+        Deux infos pour que tes imports soient bien rattachés :
+        ta <strong>page Portail du mycologue</strong> (elle remplit la colonne
+        <code>Mycologue (relation)</code> et récupère automatiquement ton pseudo
+        + ton ID iNaturalist) et ton <strong>préfixe Fongarium</strong>.
     </p>
-    <p style='text-align: center;'>
-        Pour activer ça, sélectionne ta page Portail ci-dessous (configuration unique).
-    </p>
+    <p style='text-align: center;'>Configuration unique.</p>
     """, unsafe_allow_html=True)
 
     portail_pages = fetch_portail_pages(NOTION_TOKEN) if has_secrets else []
@@ -651,14 +654,27 @@ def portail_setup_gate():
         )
         st.stop()
 
-    # Pré-sélection automatique : si on trouve la page par login iNat, on la propose en défaut
-    inat_login = (user_info.get("inat_username") or "").lower().strip()
+    # Pré-sélection automatique : par page déjà liée (cas migration préfixe seul),
+    # sinon par login iNat.
     default_idx = 0
-    if inat_login:
+    existing_page_id = user_info.get("notion_portail_page_id")
+    inat_login = (user_info.get("inat_username") or "").lower().strip()
+    if existing_page_id:
         for i, p in enumerate(portail_pages):
-            if p["inat_login"].lower() == inat_login:
+            if p["page_id"] == existing_page_id:
                 default_idx = i + 1  # +1 car le placeholder est à l'index 0
                 break
+    if default_idx == 0 and inat_login:
+        for i, p in enumerate(portail_pages):
+            if p["inat_login"].lower() == inat_login:
+                default_idx = i + 1
+                break
+
+    # Préfixe Fongarium : préfixes déjà pris (unicité) + suggestion d'après le nom.
+    taken_prefixes = get_taken_fongarium_prefixes(exclude_user_id=user_info.get("id"))
+    suggested_prefix = suggest_fongarium_prefix(
+        user_info.get("notion_user_name") or "", taken_prefixes
+    )
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -673,10 +689,34 @@ def portail_setup_gate():
                 format_func=lambda p: "— Sélectionne ta page —" if p is None else p["label"],
                 key="setup_portail_select",
             )
-            confirm = st.form_submit_button("Lier ma page et continuer", type="primary")
+            prefix_input = st.text_input(
+                "Ton préfixe Fongarium",
+                value=(user_info.get("fongarium_prefix") or suggested_prefix),
+                max_chars=8,
+                placeholder="ex: MRD",
+                help=(
+                    "Les INITIALES de ton nom, en majuscules — ex. « Mathias "
+                    "Rocheleau-Duplain » → MRD. Il préfixe tes numéros de fongarium "
+                    "(MRD0001…) et doit être UNIQUE (pas déjà pris par un autre membre)."
+                ),
+            )
+            if suggested_prefix:
+                st.caption(f"💡 Suggestion d'après ton nom : **{suggested_prefix}** (modifiable)")
+            confirm = st.form_submit_button("Enregistrer et continuer", type="primary")
             if confirm:
+                prefix_clean = (prefix_input or "").strip().upper()
                 if choice is None:
-                    st.warning("Sélectionne ta page dans la liste avant de continuer.")
+                    st.warning("Sélectionne ta page Portail dans la liste avant de continuer.")
+                elif not prefix_clean:
+                    st.warning("Entre ton préfixe Fongarium (ex: MRD) pour continuer.")
+                elif prefix_clean in taken_prefixes:
+                    _alt = suggest_fongarium_prefix(
+                        user_info.get("notion_user_name") or "", taken_prefixes | {prefix_clean}
+                    )
+                    st.error(
+                        f"⚠️ Le préfixe « {prefix_clean} » est déjà utilisé par un autre "
+                        "membre. " + (f"Essaie plutôt **{_alt}**." if _alt else "Choisis-en un autre.")
+                    )
                 else:
                     selected = choice
                     user_id = user_info.get("id")
@@ -687,7 +727,10 @@ def portail_setup_gate():
                     # pseudo iNat + l'ID numérique DEPUIS la BD curée (corrige les
                     # profils cassés type « courriel »). On n'écrase que si la page
                     # fournit la valeur.
-                    gate_updates = {"notion_portail_page_id": selected["page_id"]}
+                    gate_updates = {
+                        "notion_portail_page_id": selected["page_id"],
+                        "fongarium_prefix": prefix_clean,
+                    }
                     page_login = (selected.get("inat_login") or "").strip()
                     page_uid = (selected.get("inat_user_id") or "").strip()
                     if page_login:
@@ -703,15 +746,15 @@ def portail_setup_gate():
                             st.session_state.selected_users = [page_login]
                         if page_uid:
                             st.session_state.inat_user_id = page_uid
-                        st.success(f"✅ Page liée : {selected['nom_complet']}")
+                        st.success(f"✅ Profil complété : {selected['nom_complet']} · {prefix_clean}")
                         st.rerun()
                     else:
                         st.error(f"Erreur lors de l'enregistrement : {res}")
 
         st.caption(
-            "Cette étape est obligatoire pour les utilisateurs existants — "
-            "à terme la colonne `Mycologue (select)` sera supprimée au profit "
-            "de la relation."
+            "Configuration unique, obligatoire — les infos de ta page Portail "
+            "(pseudo + ID iNaturalist) pré-remplissent ton profil. À terme la "
+            "colonne `Mycologue (select)` sera remplacée par la relation."
         )
 
     st.stop()  # Bloque tout ce qui suit tant que pas configuré
@@ -1106,7 +1149,7 @@ if nav_mode == "👤 Mon Profil":
         
         with col_p2:
             # New Fields (Optional, might error if cols missing)
-            new_prefix = st.text_input("Préfixe Fongarium", value=u_data.get("fongarium_prefix", ""), placeholder="ex: MRD", help="Identifiant de 3-4 lettres")
+            new_prefix = st.text_input("Préfixe Fongarium", value=u_data.get("fongarium_prefix", ""), placeholder="ex: MRD", help="Initiales de ton nom (ex: « Mathias Rocheleau-Duplain » → MRD). Doit être UNIQUE entre membres.")
             new_photo = st.text_input("URL Photo de Profil", value=u_data.get("photo_url", ""), placeholder="https://...")
             new_bio = st.text_area("Bio / Description", value=u_data.get("bio", ""), placeholder="Mycologue passionné...")
             new_fb = st.text_input("Lien Facebook", value=u_data.get("social_fb", ""), placeholder="https://facebook.com/...")
@@ -1122,26 +1165,41 @@ if nav_mode == "👤 Mon Profil":
             # On stocke la casse officielle renvoyée par iNat.
             old_inat = (u_data.get("inat_username", "") or "").strip()
             pseudo_changed = (new_inat or "").strip() != old_inat
+            inat_uid_val = ""
             if not pseudo_changed:
                 inat_login, inat_err = old_inat, None
             else:
-                inat_login, inat_err = validate_inat_username(new_inat)
+                inat_login, inat_uid_val, inat_err = resolve_inat_identity(new_inat)
+            new_prefix_clean = (new_prefix or "").strip().upper()
+            other_prefixes = (
+                get_taken_fongarium_prefixes(exclude_user_id=u_data.get("id"))
+                if new_prefix_clean else set()
+            )
             if inat_err:
                 st.error(inat_err)
+            elif new_prefix_clean and new_prefix_clean in other_prefixes:
+                _alt = suggest_fongarium_prefix(
+                    new_notion or u_data.get("notion_user_name") or "",
+                    other_prefixes | {new_prefix_clean},
+                )
+                st.error(
+                    f"⚠️ Le préfixe « {new_prefix_clean} » est déjà utilisé par un "
+                    "autre membre. " + (f"Essaie **{_alt}**." if _alt else "Choisis-en un autre.")
+                )
             else:
                 # Prepare updates
                 updates = {
                     "notion_user_name": new_notion,
                     "inat_username": inat_login
                 }
-                # Pseudo changé manuellement → l'ID numérique stocké devient
-                # OBSOLÈTE (il pointait vers l'ancien compte) : on le vide, la
-                # recherche retombe sur le login validé (ré-rempli si l'utilisateur
-                # relie sa page Portail).
+                # Pseudo changé manuellement → on ré-résout l'ID numérique du
+                # NOUVEAU login (l'ancien pointait vers un autre compte). Vide si
+                # non résolu → la recherche retombe sur le login validé.
                 if pseudo_changed:
-                    updates["inat_user_id"] = None
+                    updates["inat_user_id"] = inat_uid_val or None
                 # Try to add optional fields to update dict
-                if new_prefix: updates["fongarium_prefix"] = new_prefix
+                if new_prefix_clean:
+                    updates["fongarium_prefix"] = new_prefix_clean
                 if new_photo: updates["photo_url"] = new_photo
                 if new_bio:   updates["bio"] = new_bio
                 if new_fb:    updates["social_fb"] = new_fb
@@ -1155,7 +1213,7 @@ if nav_mode == "👤 Mon Profil":
                     st.session_state.username = new_notion
                     st.session_state.inat_username = inat_login
                     if pseudo_changed:
-                        st.session_state.inat_user_id = ""
+                        st.session_state.inat_user_id = inat_uid_val or ""
                     # Recale le filtre « Personne » SANS écraser les collègues
                     # déjà sélectionnés : on remplace l'ancien pseudo par le
                     # nouveau (ou on l'ajoute), puis on dédoublonne (ordre gardé).
