@@ -3,7 +3,11 @@
 Lance avec `pytest test_inat_validation.py` OU directement `python test_inat_validation.py`.
 """
 
-from inat_validation import validate_inat_username, looks_like_invalid_inat_username
+from inat_validation import (
+    validate_inat_username,
+    looks_like_invalid_inat_username,
+    resolve_search_user_id,
+)
 
 
 # ── Doublures de test (pas d'appel réseau réel) ──────────────────────────────
@@ -91,6 +95,25 @@ def test_panne_reseau_ne_leve_pas():
     login, err = validate_inat_username("mycosystema", session=_BoomSession())
     assert login is None
     assert err  # message dégradé, pas d'exception
+
+
+# ── resolve_search_user_id ───────────────────────────────────────────────────
+
+def test_resolve_prefere_id_numerique():
+    assert resolve_search_user_id("12345", "mycosystema") == "12345"
+    assert resolve_search_user_id(12345, "mycosystema") == "12345"
+
+
+def test_resolve_repli_login_si_pas_numerique():
+    assert resolve_search_user_id("", "mycosystema") == "mycosystema"
+    assert resolve_search_user_id(None, "mycosystema") == "mycosystema"
+    # une valeur non numérique (ex. courriel stocké par erreur) → repli login validé
+    assert resolve_search_user_id("abc@x.ca", "mycosystema") == "mycosystema"
+
+
+def test_resolve_vide_si_aucun():
+    assert resolve_search_user_id(None, None) == ""
+    assert resolve_search_user_id("", "  ") == ""
 
 
 # ── Runner autonome (sans pytest) ────────────────────────────────────────────

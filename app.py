@@ -7,7 +7,7 @@ from notion_client.errors import APIResponseError
 from datetime import date, timedelta
 from labels import generate_label_pdf
 from database import get_user_by_email, create_user_profile, log_action, update_user_profile
-from inat_validation import validate_inat_username, looks_like_invalid_inat_username
+from inat_validation import validate_inat_username, looks_like_invalid_inat_username, resolve_search_user_id
 
 import re
 import time
@@ -293,6 +293,7 @@ def fetch_portail_pages(token):
       - page_id       : str (UUID Notion)
       - nom_complet   : str (titre de la page)
       - inat_login    : str (champ "Inaturalist (nom d'utilisateur)" ou "")
+      - inat_user_id  : str (champ "iNaturalist ID" numérique ou "") — ancre de recherche
       - alias         : str (champ "Alias dans la BD Observations" ou "")
       - label         : str (texte affichable, ex: "Mathias Rocheleau-Duplain (iNat: mycosystema)")
 
@@ -341,6 +342,13 @@ def fetch_portail_pages(token):
                 alias_prop = props.get("Alias dans la BD Observations", {})
                 if alias_prop.get("type") == "rich_text" and alias_prop.get("rich_text"):
                     alias = alias_prop["rich_text"][0].get("plain_text", "").strip()
+                # iNat ID numérique (rich_text) — ancre de jointure la PLUS robuste :
+                # utilisé comme `user_id` de recherche, un ID numérique ne renvoie
+                # jamais de 422 (contrairement à un login/courriel mal formé).
+                inat_uid = ""
+                uid_prop = props.get("iNaturalist ID", {})
+                if uid_prop.get("type") == "rich_text" and uid_prop.get("rich_text"):
+                    inat_uid = uid_prop["rich_text"][0].get("plain_text", "").strip()
                 if not nom:
                     continue
                 label = nom
@@ -352,6 +360,7 @@ def fetch_portail_pages(token):
                     "page_id": p["id"],
                     "nom_complet": nom,
                     "inat_login": inat,
+                    "inat_user_id": inat_uid,
                     "alias": alias,
                     "label": label,
                 })
@@ -469,7 +478,8 @@ def login_page():
                         st.session_state.user_info = user
                         st.session_state.username = user.get("notion_user_name", email_input)
                         st.session_state.inat_username = user.get("inat_username", "")
-                        
+                        st.session_state.inat_user_id = user.get("inat_user_id", "") or ""
+
                         # Auto-fill filters right here on login!
                         if st.session_state.inat_username:
                             st.session_state.selected_users = [st.session_state.inat_username]
@@ -560,23 +570,39 @@ def login_page():
                         )
 
                     if st.form_submit_button("Finaliser mon portail"):
-                        # Validation du pseudo iNat AVANT création : on ne veut
-                        # jamais stocker un courriel/pseudo invalide qui casserait
-                        # toutes les recherches (422). On retient la casse officielle.
-                        inat_login, inat_err = validate_inat_username(reg_inat)
-                        if not reg_inat or not reg_notion_name:
+                        # Réconciliation d'identité : si l'utilisateur réclame sa
+                        # page Portail, le pseudo iNat + l'ID numérique de la BD
+                        # curée FONT AUTORITÉ (évite la ressaisie et les 422) ;
+                        # sinon on valide la saisie manuelle.
+                        page_login, page_uid = "", ""
+                        if reg_portail_page_id and portail_choice:
+                            page_login = (portail_choice.get("inat_login") or "").strip()
+                            page_uid = (portail_choice.get("inat_user_id") or "").strip()
+                        if page_login:
+                            inat_login, inat_err = page_login, None
+                        elif page_uid:
+                            # La page fournit l'ID numérique (ancre suffisante) sans
+                            # login → inutile d'exiger un pseudo saisi ; l'ID seul suffit.
+                            inat_login, inat_err = "", None
+                        else:
+                            inat_login, inat_err = validate_inat_username(reg_inat)
+
+                        if not reg_notion_name:
                             st.warning("Tout remplir SVP.")
                         elif portail_pages and not reg_portail_page_id:
                             st.warning("Sélectionne ta page Portail du mycologue dans la liste.")
                         elif inat_err:
                             st.error(inat_err)
+                        elif not inat_login and not page_uid:
+                            st.warning("Entre ton pseudo iNaturalist (ou réclame une page Portail qui le contient).")
                         else:
-                            # On utilise reg_email du state ; pseudo = login validé.
+                            # pseudo/ID = page réclamée (autorité) ou saisie validée.
                             success = create_user_profile(
                                 st.session_state.reg_email,
                                 reg_notion_name,
                                 inat_login,
                                 notion_portail_page_id=reg_portail_page_id,
+                                inat_user_id=page_uid,
                             )
                             if success:
                                 st.balloons()
@@ -657,13 +683,26 @@ def portail_setup_gate():
                     if not user_id:
                         st.error("Profil utilisateur incomplet — impossible de mettre à jour.")
                         st.stop()
-                    res = update_user_profile(
-                        user_id,
-                        {"notion_portail_page_id": selected["page_id"]},
-                    )
+                    # Réconciliation d'identité : réclamer sa page backfille le
+                    # pseudo iNat + l'ID numérique DEPUIS la BD curée (corrige les
+                    # profils cassés type « courriel »). On n'écrase que si la page
+                    # fournit la valeur.
+                    gate_updates = {"notion_portail_page_id": selected["page_id"]}
+                    page_login = (selected.get("inat_login") or "").strip()
+                    page_uid = (selected.get("inat_user_id") or "").strip()
+                    if page_login:
+                        gate_updates["inat_username"] = page_login
+                    if page_uid:
+                        gate_updates["inat_user_id"] = page_uid
+                    res = update_user_profile(user_id, gate_updates)
                     if res is True:
                         # Refresh user_info en mémoire pour éviter une re-boucle
-                        st.session_state.user_info["notion_portail_page_id"] = selected["page_id"]
+                        st.session_state.user_info.update(gate_updates)
+                        if page_login:
+                            st.session_state.inat_username = page_login
+                            st.session_state.selected_users = [page_login]
+                        if page_uid:
+                            st.session_state.inat_user_id = page_uid
                         st.success(f"✅ Page liée : {selected['nom_complet']}")
                         st.rerun()
                     else:
@@ -1082,7 +1121,8 @@ if nav_mode == "👤 Mon Profil":
             # pseudo invalide déjà stocké reste signalé par le bandeau du dashboard.
             # On stocke la casse officielle renvoyée par iNat.
             old_inat = (u_data.get("inat_username", "") or "").strip()
-            if (new_inat or "").strip() == old_inat:
+            pseudo_changed = (new_inat or "").strip() != old_inat
+            if not pseudo_changed:
                 inat_login, inat_err = old_inat, None
             else:
                 inat_login, inat_err = validate_inat_username(new_inat)
@@ -1094,6 +1134,12 @@ if nav_mode == "👤 Mon Profil":
                     "notion_user_name": new_notion,
                     "inat_username": inat_login
                 }
+                # Pseudo changé manuellement → l'ID numérique stocké devient
+                # OBSOLÈTE (il pointait vers l'ancien compte) : on le vide, la
+                # recherche retombe sur le login validé (ré-rempli si l'utilisateur
+                # relie sa page Portail).
+                if pseudo_changed:
+                    updates["inat_user_id"] = None
                 # Try to add optional fields to update dict
                 if new_prefix: updates["fongarium_prefix"] = new_prefix
                 if new_photo: updates["photo_url"] = new_photo
@@ -1108,6 +1154,8 @@ if nav_mode == "👤 Mon Profil":
                     st.session_state.user_info.update(updates)
                     st.session_state.username = new_notion
                     st.session_state.inat_username = inat_login
+                    if pseudo_changed:
+                        st.session_state.inat_user_id = ""
                     # Recale le filtre « Personne » SANS écraser les collègues
                     # déjà sélectionnés : on remplace l'ancien pseudo par le
                     # nouveau (ou on l'ajoute), puis on dédoublonne (ordre gardé).
@@ -1259,7 +1307,10 @@ elif nav_mode == "📊 Tableau de Bord":
     # Capte aussi les profils DÉJÀ cassés (ex. un courriel stocké avant l'ajout
     # de la validation à l'inscription) : sans pseudo valide, toute recherche
     # iNaturalist échoue en 422. Heuristique sans réseau (pas d'appel API ici).
-    if looks_like_invalid_inat_username(st.session_state.get("inat_username", "")):
+    # On ne prévient PAS si un ID numérique valide est présent : la recherche
+    # passe alors par l'ID (jamais de 422), le pseudo textuel devient accessoire.
+    _inat_uid_ok = (st.session_state.get("inat_user_id") or "").strip().isdigit()
+    if looks_like_invalid_inat_username(st.session_state.get("inat_username", "")) and not _inat_uid_ok:
         st.warning(
             "**Ton pseudo iNaturalist n'est pas configuré (ou semble invalide).** "
             "Les recherches iNaturalist échoueront tant que ce n'est pas corrigé.\n\n"
@@ -1282,7 +1333,10 @@ elif nav_mode == "📊 Tableau de Bord":
             try:
                 # Quick fetch single ID
                 # We prioritize logged in user
-                target_user = st.session_state.inat_username or "mycosphaera"
+                target_user = resolve_search_user_id(
+                    st.session_state.get("inat_user_id"),
+                    st.session_state.inat_username,
+                ) or "mycosphaera"
                 # API Call with per_page=0 just to get total_results, filtering for Fungi and Protozoa
                 stat_api = get_observations(user_id=target_user, per_page=0, iconic_taxa=['Fungi', 'Protozoa'])
                 total_inat = stat_api.get("total_results", 0)
@@ -2216,6 +2270,19 @@ elif nav_mode == "📊 Tableau de Bord":
                 else:
                     fetch_limit = 10000 # "Tout" -> large number
                     
+                # Pour l'utilisateur courant, on remplace son login par son ID iNat
+                # NUMÉRIQUE quand on l'a (jamais de 422). Les autres entrées (comptes
+                # de collègues ajoutés par un admin) gardent leur login validé.
+                _cur_login = (st.session_state.get("inat_username") or "").strip().lower()
+                _cur_uid = resolve_search_user_id(
+                    st.session_state.get("inat_user_id"), st.session_state.get("inat_username")
+                )
+                if _cur_uid.isdigit() and _cur_login:
+                    user_list = [
+                        _cur_uid if (u or "").strip().lower() == _cur_login else u
+                        for u in user_list
+                    ]
+
                 # Garde-fou : un pseudo manifestement invalide (courriel, espace)
                 # dans le filtre « Personne » ferait échouer la requête iNat en 422.
                 # On bloque AVANT l'appel réseau pour éviter l'erreur cryptique.
