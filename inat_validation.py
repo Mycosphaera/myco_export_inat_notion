@@ -53,8 +53,9 @@ def looks_like_invalid_inat_username(username: str | None) -> bool:
     return (not u) or ("@" in u) or any(c.isspace() for c in u)
 
 
-def validate_inat_username(username: str | None, *, session=None, timeout: float = 10.0):
-    """Vérifie un pseudo iNaturalist contre l'API publique `users/autocomplete`.
+def resolve_inat_identity(username: str | None, *, session=None, timeout: float = 10.0):
+    """Valide un pseudo iNaturalist ET récupère son id NUMÉRIQUE en un seul appel
+    à `users/autocomplete` (l'id est renvoyé dans le même résultat).
 
     Args:
         username: le pseudo saisi par l'utilisateur.
@@ -62,21 +63,20 @@ def validate_inat_username(username: str | None, *, session=None, timeout: float
         timeout: délai max de la requête HTTP.
 
     Returns:
-        ``(login_canonique, None)`` si le pseudo existe sur iNaturalist — on
-        renvoie la casse OFFICIELLE renvoyée par iNat, pas celle tapée.
-        ``(None, message_fr)`` sinon (vide, courriel, introuvable, ou panne
-        réseau). La fonction **ne lève jamais** : l'appelant décide quoi faire
-        du message (bloquer l'inscription, afficher une erreur, etc.).
+        ``(login_canonique, user_id_numérique_str, None)`` si le pseudo existe —
+        casse OFFICIELLE d'iNat ; `user_id` = "" si iNat ne le renvoie pas.
+        ``(None, "", message_fr)`` sinon (vide, courriel, introuvable, ou panne
+        réseau). **Ne lève jamais** : l'appelant décide quoi faire du message.
     """
     candidate = (username or "").strip()
 
     if not candidate:
-        return None, f"Le pseudo iNaturalist est vide. {_HELP_PSEUDO}"
+        return None, "", f"Le pseudo iNaturalist est vide. {_HELP_PSEUDO}"
 
     # Garde-fou immédiat : un courriel n'est jamais un login iNat valide.
     # On l'attrape avant l'appel réseau pour un message clair et instantané.
     if "@" in candidate:
-        return None, (
+        return None, "", (
             f"« {candidate} » ressemble à un courriel, pas à un pseudo "
             f"iNaturalist. {_HELP_PSEUDO}"
         )
@@ -95,7 +95,7 @@ def validate_inat_username(username: str | None, *, session=None, timeout: float
         resp.raise_for_status()
         results = resp.json().get("results", []) or []
     except Exception as e:  # réseau, timeout, JSON, HTTP ≠ 200…
-        return None, (
+        return None, "", (
             "Impossible de vérifier le pseudo iNaturalist pour l'instant "
             f"(réseau ou API indisponible) : {e}"
         )
@@ -104,9 +104,18 @@ def validate_inat_username(username: str | None, *, session=None, timeout: float
     for u in results:
         login = u.get("login") or ""
         if login.lower() == candidate.lower():
-            return login, None
+            uid = u.get("id")
+            return login, (str(uid) if uid is not None else ""), None
 
-    return None, (
+    return None, "", (
         f"Le pseudo iNaturalist « {candidate} » est introuvable. Vérifie "
         f"l'orthographe. {_HELP_PSEUDO}"
     )
+
+
+def validate_inat_username(username: str | None, *, session=None, timeout: float = 10.0):
+    """Wrapper rétro-compatible de `resolve_inat_identity` pour les appelants qui
+    n'ont pas besoin de l'id numérique. Retourne ``(login|None, message|None)``.
+    """
+    login, _uid, err = resolve_inat_identity(username, session=session, timeout=timeout)
+    return login, err

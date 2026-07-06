@@ -5,6 +5,7 @@ Lance avec `pytest test_inat_validation.py` OU directement `python test_inat_val
 
 from inat_validation import (
     validate_inat_username,
+    resolve_inat_identity,
     looks_like_invalid_inat_username,
     resolve_search_user_id,
 )
@@ -33,7 +34,10 @@ class _FakeSession:
 
     def get(self, *args, **kwargs):
         self.called = True
-        return _FakeResp({"results": [{"login": l} for l in self._logins]})
+        # iNat renvoie un id numérique par résultat → on le simule (1000+i).
+        return _FakeResp(
+            {"results": [{"login": l, "id": 1000 + i} for i, l in enumerate(self._logins)]}
+        )
 
 
 class _BoomSession:
@@ -95,6 +99,28 @@ def test_panne_reseau_ne_leve_pas():
     login, err = validate_inat_username("mycosystema", session=_BoomSession())
     assert login is None
     assert err  # message dégradé, pas d'exception
+
+
+# ── resolve_inat_identity (login + id numérique) ─────────────────────────────
+
+def test_resolve_identity_retourne_login_et_id():
+    sess = _FakeSession(["MycoSystema", "autre_user"])
+    login, uid, err = resolve_inat_identity("mycosystema", session=sess)
+    assert err is None
+    assert login == "MycoSystema"      # casse officielle
+    assert uid == "1000"               # id numérique capté (str)
+
+
+def test_resolve_identity_courriel_rejete_sans_reseau():
+    sess = _FakeSession(["marcbois"])
+    login, uid, err = resolve_inat_identity("mboisaves@videotron.ca", session=sess)
+    assert login is None and uid == "" and "courriel" in err.lower()
+    assert sess.called is False
+
+
+def test_resolve_identity_introuvable():
+    login, uid, err = resolve_inat_identity("pseudo_bidon", session=_FakeSession(["x"]))
+    assert login is None and uid == "" and "introuvable" in err.lower()
 
 
 # ── resolve_search_user_id ───────────────────────────────────────────────────
