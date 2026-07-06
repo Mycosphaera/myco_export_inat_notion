@@ -1036,7 +1036,7 @@ with st.sidebar:
     if photo_url: # Only if user added the column manually
         st.image(photo_url, width=100)
     
-    nav_mode = st.radio("Navigation", ["📊 Tableau de Bord", "👤 Mon Profil"], label_visibility="collapsed")
+    nav_mode = st.radio("Navigation", ["📊 Tableau de Bord", "👤 Mon Profil", "ℹ️ Aide & Codes"], label_visibility="collapsed")
     
     st.divider()
     if st.button("Se déconnecter"):
@@ -1132,6 +1132,118 @@ ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS social_fb text;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS social_insta text;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS fongarium_prefix text;
 """, language="sql")
+
+elif nav_mode == "ℹ️ Aide & Codes":
+    st.title("ℹ️ Aide & Codes")
+    st.caption("Le parcours d'une observation, et les codes qui automatisent l'import vers Notion.")
+
+    # ── 1. Workflow de bout en bout ──────────────────────────────────────
+    st.subheader("🔄 Le parcours d'une observation")
+    st.markdown(
+        "1. **Terrain** — tu observes, photographies, notes. Dans le champ "
+        "**Notes / Description** de l'observation iNaturalist, tu ajoutes tes "
+        "**codes** (voir plus bas).\n"
+        "2. **iNaturalist** — l'observation est publiée sur ton compte.\n"
+        "3. **Import ici** — onglet *Recherche & Filtres* : tu retrouves tes "
+        "observations (filtre par ton **pseudo iNat**, dates, groupe…) et tu les importes.\n"
+        "4. **Enrichissement automatique** — à l'import, l'app lit tes codes et "
+        "remplit les relations Notion : **Espèce, Station, Projet, Habitat, "
+        "Substrat, Végétation, Fongarium**.\n"
+        "5. **Notion** — l'observation arrive standardisée, reliée aux bonnes "
+        "fiches. Zéro ressaisie."
+    )
+    st.info(
+        "💡 Plus tes codes sont justes, moins il y a de « trous » à corriger "
+        "après coup. Un **aperçu de contrôle** signale les codes non reconnus "
+        "**avant** l'import (onglet Recherche)."
+    )
+
+    st.divider()
+
+    # ── 2. Convention de codes ───────────────────────────────────────────
+    st.subheader("🔤 La convention de codes")
+    st.markdown(
+        "Écris ces codes dans le champ **Notes / Description** de ton "
+        "observation iNaturalist (séparés par des espaces) :"
+    )
+    st.dataframe(
+        pd.DataFrame([
+            {"Code": "*FSL01", "Effet": "Station d'inventaire (+ Projet déduit du préfixe, ex. FSL)"},
+            {"Code": "#coll  ou  *coll", "Effet": "Coche « Fongarium » (spécimen récolté)"},
+            {"Code": "!CODE", "Effet": "Habitat général (ex. !BOM)"},
+            {"Code": "$CODE", "Effet": "Substrat (ex. $BMC)"},
+            {"Code": "#CODE", "Effet": "Végétation / plante associée (ex. #BOJ)"},
+            {"Code": "##CODE", "Effet": "Hôte-substrat : la plante sur/dans laquelle pousse le champignon"},
+            {"Code": "Nom en clair", "Effet": "Végétation reconnue par son nom (fr / latin / anglais) — ex. Bouleau jaune"},
+        ]),
+        use_container_width=True, hide_index=True,
+    )
+    st.warning(
+        "⚠️ **N'utilise jamais `@`** pour tes codes : iNaturalist le prend pour "
+        "une mention d'utilisateur (ça peut lier ton observation au mauvais "
+        "compte). C'est pourquoi les stations utilisent `*` et non `@`."
+    )
+    st.caption(
+        "Exemple complet dans une note iNat : `*FSL01 #coll $BMC !BOM ##BOJ` → "
+        "station FSL01 + projet FSL, coché Fongarium, substrat BMC, habitat BOM, "
+        "hôte bouleau jaune."
+    )
+
+    st.divider()
+
+    # ── 3. Référentiel VIVANT des codes (depuis Notion) ──────────────────
+    st.subheader("📖 Référentiel des codes disponibles")
+    st.caption("La liste réelle des codes reconnus, tirée directement de tes bases Notion.")
+
+    if not NOTION_TOKEN:
+        st.error("Token Notion non configuré — référentiel indisponible.")
+    else:
+        _c1, _c2 = st.columns([3, 1])
+        with _c2:
+            if st.button("🔄 Rafraîchir la liste"):
+                cached_build_lookup_maps.clear()
+                st.session_state.enricher_maps = cached_build_lookup_maps(NOTION_TOKEN)
+                st.rerun()
+        if not st.session_state.get("enricher_maps"):
+            with st.spinner("Chargement des codes depuis Notion… (1-2 min la 1ʳᵉ fois, instantané ensuite)"):
+                st.session_state.enricher_maps = cached_build_lookup_maps(NOTION_TOKEN)
+        _maps = st.session_state.enricher_maps or {}
+
+        _query = st.text_input(
+            "🔎 Filtrer (code ou nom)", placeholder="ex. FSL, bouleau, conifère…"
+        ).strip().lower()
+
+        def _ref_rows(code_map, name_map):
+            rows = []
+            for _code in sorted(code_map or {}):
+                _name = (name_map or {}).get(_code, "")
+                if not _query or _query in _code.lower() or _query in str(_name).lower():
+                    rows.append({"Code": _code, "Nom": _name})
+            return rows
+
+        _sections = [
+            ("Stations d'inventaire", "*", _ref_rows(_maps.get("station_map"), _maps.get("station_names"))),
+            ("Projets d'inventaire", "(préfixe de station)", _ref_rows(_maps.get("projet_map"), _maps.get("projet_names"))),
+            ("Habitats", "!", _ref_rows(_maps.get("habitat_codes"), _maps.get("habitat_names"))),
+            ("Substrats", "$", _ref_rows(_maps.get("substrat_codes"), _maps.get("substrat_names"))),
+            ("Végétation (plantes)", "# ou ##", _ref_rows(_maps.get("vegetation_code_map"), _maps.get("vegetation_code_names"))),
+        ]
+        _any = False
+        for _label, _prefix, _rows in _sections:
+            if _rows:
+                _any = True
+                st.markdown(f"**{_label}** — préfixe `{_prefix}` · {len(_rows)} code(s)")
+                st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+        if not _any:
+            st.info(
+                "Aucun code ne correspond à ta recherche." if _query
+                else "Aucun code chargé. Vérifie la config Notion ou clique « Rafraîchir la liste »."
+            )
+        _errs = _maps.get("_errors") or []
+        if _errs:
+            with st.expander("⚠️ Certaines bases n'ont pas pu être lues"):
+                for _e in _errs:
+                    st.caption(f"• {_e}")
 
 elif nav_mode == "📊 Tableau de Bord":
     # --- HEADER / DASHBOARD ---
@@ -2361,7 +2473,44 @@ elif nav_mode == "📊 Tableau de Bord":
         with c_title:
             total_avail = st.session_state.get('total_results_count', len(df_main))
             st.subheader(f"📋 Aperçu d'importation (Inaturalist) ({total_avail} obs trouvées)")
-        
+
+        # ── Aperçu de contrôle des codes (linter avant import) ───────────
+        # Signale les codes écrits dans les notes iNat mais NON reconnus, pour
+        # corriger AVANT d'importer (sinon = relations non liées = « trous »).
+        _lint_maps = st.session_state.get("enricher_maps")
+        if _lint_maps:
+            _bad_rows = []
+            _total_ok = 0
+            for _, _row in df_main.iterrows():
+                _lr = enricher.lint_description_codes(_row.get("Description", ""), _lint_maps)
+                _total_ok += len(_lr["recognized"])
+                if _lr["has_issues"]:
+                    _bad_rows.append({
+                        "ID": _row.get("ID", ""),
+                        "Taxon": _row.get("Taxon", ""),
+                        "Codes non reconnus": ", ".join(u["token"] for u in _lr["unrecognized"]),
+                        "@ à éviter": ", ".join(_lr["at_warnings"]),
+                    })
+            if _bad_rows:
+                st.warning(
+                    f"⚠️ **{len(_bad_rows)} observation(s)** ont des codes non reconnus "
+                    f"(ou un `@`). Corrige les notes iNat **avant** l'import pour éviter "
+                    f"des trous (Espèce / Station / Substrat non liés)."
+                )
+                with st.expander(f"Voir le détail des codes à corriger ({len(_bad_rows)})"):
+                    st.dataframe(pd.DataFrame(_bad_rows), use_container_width=True, hide_index=True)
+                    st.caption("La liste complète des codes valides est dans « ℹ️ Aide & Codes ».")
+            elif _total_ok:
+                st.success(f"✅ Codes des notes iNat : tous reconnus ({_total_ok}).")
+            # Aucun code utilisé → on reste silencieux (rien à vérifier).
+        else:
+            _lc1, _lc2 = st.columns([3, 1])
+            _lc1.caption("🔎 Vérification des codes désactivée (référentiels non chargés).")
+            if _lc2.button("Activer la vérification"):
+                with st.spinner("Chargement des référentiels…"):
+                    st.session_state.enricher_maps = cached_build_lookup_maps(NOTION_TOKEN)
+                st.rerun()
+
         # Filter Widgets
         col_date, col_hide, col_limit = st.columns([3, 1, 1])
         

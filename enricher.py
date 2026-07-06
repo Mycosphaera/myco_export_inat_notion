@@ -287,6 +287,11 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             "vegetation_fr_map": {},
             "vegetation_en_map": {},
             "projet_map": {},
+            "station_names": {},
+            "habitat_names": {},
+            "substrat_names": {},
+            "projet_names": {},
+            "vegetation_code_names": {},
             "_errors": ["Configuration manquante : db_ids vide. Vérifie ton secrets.toml."],
         }
 
@@ -302,6 +307,12 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         "vegetation_fr_map": {},       # nom_vernaculaire_fr (bare-text)
         "vegetation_en_map": {},       # nom_vernaculaire_en (bare-text)
         "projet_map": {},
+        # Noms lisibles {CODE: nom} — additif, pour le référentiel de codes in-app.
+        "station_names": {},
+        "habitat_names": {},
+        "substrat_names": {},
+        "projet_names": {},
+        "vegetation_code_names": {},
         "_errors": []
     }
 
@@ -352,15 +363,18 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             # la colonne est recréée. Robustesse > perf sur cette petite BD.
             pages = _query_db_all(token, db_id, session=session)
             st_map = {}
+            st_names = {}
             for p in pages:
                 props = p["properties"]
+                title = _get_title(props)
                 code = _get_rich_text(props.get("Code de la station", {}))
                 if not code:
-                    title = _get_title(props)
                     code = title.split()[0] if title else ""
-                if code: st_map[code.upper()] = p["id"]
+                if code:
+                    st_map[code.upper()] = p["id"]
+                    st_names[code.upper()] = title or code
             print(f"[Notion] Stations chargées : {len(st_map)} en {time.time()-start_t:.1f}s")
-            return {"station_map": st_map}
+            return {"station_map": st_map, "station_names": st_names}
         except Exception as e:
             print(f"[Notion] Erreur Stations: {e}")
             return {"error": f"Stations: {e}"}
@@ -375,11 +389,15 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             # Pas de filter_properties : robustesse face aux changements d'ID Notion.
             pages = _query_db_all(token, db_id, session=session)
             h_map = {}
+            h_names = {}
             for p in pages:
-                code = _get_rich_text(p["properties"].get("Code terrain", {}))
-                if code: h_map[code.upper()] = p["id"]
+                props = p["properties"]
+                code = _get_rich_text(props.get("Code terrain", {}))
+                if code:
+                    h_map[code.upper()] = p["id"]
+                    h_names[code.upper()] = _get_title(props) or code
             print(f"[Notion] Habitats chargés : {len(h_map)} en {time.time()-start_t:.1f}s")
-            return {"habitat_codes": h_map}
+            return {"habitat_codes": h_map, "habitat_names": h_names}
         except Exception as e:
             print(f"[Notion] Erreur Habitats: {e}")
             return {"error": f"Habitats: {e}"}
@@ -394,11 +412,15 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             # Pas de filter_properties : robustesse face aux changements d'ID Notion.
             pages = _query_db_all(token, db_id, session=session)
             su_map = {}
+            su_names = {}
             for p in pages:
-                code = _get_rich_text(p["properties"].get("Code terrain", {}))
-                if code: su_map[code.upper()] = p["id"]
+                props = p["properties"]
+                code = _get_rich_text(props.get("Code terrain", {}))
+                if code:
+                    su_map[code.upper()] = p["id"]
+                    su_names[code.upper()] = _get_title(props) or code
             print(f"[Notion] Substrats chargés : {len(su_map)} en {time.time()-start_t:.1f}s")
-            return {"substrat_codes": su_map}
+            return {"substrat_codes": su_map, "substrat_names": su_names}
         except Exception as e:
             print(f"[Notion] Erreur Substrats: {e}")
             return {"error": f"Substrats: {e}"}
@@ -418,6 +440,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
                 filter_properties=["title", "hNJw", "oZxm", "%3AUtU", "%5Esso"],
             )
             v_latin, v_code, v_fr, v_en = {}, {}, {}, {}
+            v_code_names = {}
             for p in pages:
                 props = p["properties"]
                 pid = p["id"]
@@ -429,6 +452,8 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
                 code = _get_rich_text(props.get("code_plante", {}))
                 if code:
                     v_code[code.upper()] = pid
+                    if latin:
+                        v_code_names[code.upper()] = latin
                 # nom_vernaculaire_fr — peut contenir plusieurs noms séparés par ; ou ,
                 fr_raw = _get_rich_text(props.get("nom_vernaculaire_fr", {}))
                 if fr_raw:
@@ -462,6 +487,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
                 "vegetation_code_map": v_code,
                 "vegetation_fr_map": v_fr,
                 "vegetation_en_map": v_en,
+                "vegetation_code_names": v_code_names,
             }
         except Exception as e:
             print(f"[Notion] Erreur Végétation: {e}")
@@ -476,14 +502,16 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         try:
             pages = _query_db_all(token, db_id, session=session)
             p_map = {}
+            p_names = {}
             for p in pages:
                 props = p["properties"]
                 # Champ "Code" : acronyme officiel (ex: FSL, RNFCT, LT)
                 code = _get_rich_text(props.get("Code", {}))
                 if code:
                     p_map[code.upper()] = p["id"]
+                    p_names[code.upper()] = _get_title(props) or code
             print(f"[Notion] Projets chargés : {len(p_map)} en {time.time()-start_t:.1f}s")
-            return {"projet_map": p_map}
+            return {"projet_map": p_map, "projet_names": p_names}
         except Exception as e:
             print(f"[Notion] Erreur Projets: {e}")
             return {"error": f"Projets: {e}"}
@@ -713,6 +741,133 @@ def parse_description_codes(
         if pid not in result["vegetation_page_ids"]:
             result["vegetation_page_ids"].append(pid)
 
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 2b. lint_description_codes — validation NON destructive (aperçu avant import)
+# ---------------------------------------------------------------------------
+
+def lint_description_codes(description: str, maps: dict | None = None) -> dict:
+    """Analyse les codes d'une description SANS rien écrire — pour prévenir
+    l'utilisateur AVANT l'import.
+
+    Contrairement à `parse_description_codes` (qui ignore silencieusement un code
+    introuvable), cette fonction distingue les codes RECONNUS des codes ÉCRITS
+    mais NON reconnus (faute de frappe, station inexistante…) — la source n°1 de
+    « trous » de données. Elle signale aussi l'usage de `@` (piège : iNat le lit
+    comme une mention d'utilisateur).
+
+    Le texte libre (noms de plantes en clair) n'est PAS linté : son matching est
+    optionnel/greedy, on ne veut pas crier au loup sur de la prose descriptive.
+
+    Retourne :
+      {
+        "recognized":   [ {"token", "type", "name"} … ],
+        "unrecognized": [ {"token", "type"} … ],
+        "at_warnings":  [ "@xxx" … ],
+        "has_issues":   bool,   # True si unrecognized ou at_warnings
+      }
+    """
+    result = {
+        "recognized": [],
+        "unrecognized": [],
+        "at_warnings": [],
+        "has_issues": False,
+    }
+    if not description:
+        return result
+
+    maps = maps or {}
+    station_map         = maps.get("station_map", {}) or {}
+    habitat_codes       = maps.get("habitat_codes", {}) or {}
+    substrat_codes      = maps.get("substrat_codes", {}) or {}
+    vegetation_code_map = maps.get("vegetation_code_map", {}) or {}
+    vegetation_map      = maps.get("vegetation_map", {}) or {}
+    station_names       = maps.get("station_names", {}) or {}
+    habitat_names       = maps.get("habitat_names", {}) or {}
+    substrat_names      = maps.get("substrat_names", {}) or {}
+    veg_code_names      = maps.get("vegetation_code_names", {}) or {}
+
+    def _ok(token, type_, name):
+        result["recognized"].append({"token": token, "type": type_, "name": name or ""})
+
+    def _bad(token, type_):
+        result["unrecognized"].append({"token": token, "type": type_})
+
+    for raw in description.split():
+        if not raw:
+            continue
+
+        # @ : piège iNat (mention d'utilisateur) — jamais un code valide chez nous
+        if raw.startswith("@"):
+            result["at_warnings"].append(raw)
+            continue
+
+        # * : Station (ou *coll = Fongarium)
+        if raw.startswith("*"):
+            code = _strip_punct(raw[1:]).upper()
+            if not code:
+                continue
+            if code == "COLL":
+                _ok(raw, "fongarium", "Fongarium (collection)")
+            elif code in station_map:
+                _ok(raw, "station", station_names.get(code, code))
+            else:
+                _bad(raw, "station")
+            continue
+
+        # ## : Hôte-substrat (tester AVANT #)
+        if raw.startswith("##"):
+            code = _strip_punct(raw[2:]).upper()
+            if not code:
+                continue
+            if code in vegetation_code_map:
+                _ok(raw, "hôte-substrat", veg_code_names.get(code, code))
+            else:
+                _bad(raw, "hôte-substrat")
+            continue
+
+        # ! : Habitat général
+        if raw.startswith("!"):
+            code = _strip_punct(raw[1:]).upper()
+            if not code:
+                continue
+            if code in habitat_codes:
+                _ok(raw, "habitat", habitat_names.get(code, code))
+            else:
+                _bad(raw, "habitat")
+            continue
+
+        # $ : Substrat
+        if raw.startswith("$"):
+            code = _strip_punct(raw[1:]).upper()
+            if not code:
+                continue
+            if code in substrat_codes:
+                _ok(raw, "substrat", substrat_names.get(code, code))
+            else:
+                _bad(raw, "substrat")
+            continue
+
+        # # : Fongarium (#coll) ou Plante (code_plante, puis nom latin rétrocompat)
+        if raw.startswith("#"):
+            code = _strip_punct(raw[1:]).upper()
+            if not code:
+                continue
+            if code == "COLL":
+                _ok(raw, "fongarium", "Fongarium (collection)")
+            elif code in vegetation_code_map:
+                _ok(raw, "plante", veg_code_names.get(code, code))
+            elif code.replace("_", " ").lower() in vegetation_map:
+                _ok(raw, "plante", code.replace("_", " "))
+            else:
+                _bad(raw, "plante")
+            continue
+
+        # Sinon : texte libre → non linté (voir docstring).
+
+    result["has_issues"] = bool(result["unrecognized"] or result["at_warnings"])
     return result
 
 
