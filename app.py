@@ -6,7 +6,7 @@ from notion_client import Client
 from notion_client.errors import APIResponseError
 from datetime import date, timedelta
 from labels import generate_label_pdf
-from database import get_user_by_email, create_user_profile, log_action, update_user_profile, get_taken_fongarium_prefixes
+from database import get_user_by_email, create_user_profile, update_user_profile, get_taken_fongarium_prefixes
 from inat_validation import validate_inat_username, resolve_inat_identity, looks_like_invalid_inat_username, resolve_search_user_id
 from fongarium import suggest_fongarium_prefix
 
