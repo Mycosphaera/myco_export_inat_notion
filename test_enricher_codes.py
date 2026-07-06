@@ -152,9 +152,14 @@ def test_lint_hote_substrat_reconnu():
 
 def test_lint_description_non_texte_ne_crashe_pas():
     # Robustesse : une Description non-textuelle (NaN pandas, None) ne doit pas
-    # crasher lint_description_codes (retour d'un DataFrame → .split() sinon).
-    assert lint_description_codes(None, LINT_MAPS)["has_issues"] is False
-    assert lint_description_codes(float("nan"), LINT_MAPS)["has_issues"] is False
+    # crasher lint_description_codes (retour d'un DataFrame → .split() sinon) et
+    # doit court-circuiter proprement (aucun code ni avertissement).
+    for _bad in (None, float("nan")):
+        r = lint_description_codes(_bad, LINT_MAPS)
+        assert r["has_issues"] is False
+        assert r["recognized"] == []
+        assert r["unrecognized"] == []
+        assert r["at_warnings"] == []
 
 
 # ── Runner autonome (sans pytest) ────────────────────────────────────────────
