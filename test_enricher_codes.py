@@ -130,6 +130,33 @@ def test_lint_combo_mixte():
     assert r["unrecognized"][0]["token"] == "!BADHAB"
 
 
+def test_lint_plante_reconnue():
+    r = lint_description_codes("#BOJ", LINT_MAPS)
+    assert r["has_issues"] is False
+    assert r["recognized"][0]["type"] == "plante"
+    assert r["recognized"][0]["name"] == "Betula alleghaniensis"
+
+
+def test_lint_plante_inconnue():
+    r = lint_description_codes("#ZZZ", LINT_MAPS)
+    assert r["has_issues"] is True
+    assert r["unrecognized"][0]["type"] == "plante"
+
+
+def test_lint_hote_substrat_reconnu():
+    r = lint_description_codes("##BOJ", LINT_MAPS)
+    assert r["has_issues"] is False
+    assert r["recognized"][0]["type"] == "hôte-substrat"
+    assert r["recognized"][0]["name"] == "Betula alleghaniensis"
+
+
+def test_lint_description_non_texte_ne_crashe_pas():
+    # Robustesse : une Description non-textuelle (NaN pandas, None) ne doit pas
+    # crasher lint_description_codes (retour d'un DataFrame → .split() sinon).
+    assert lint_description_codes(None, LINT_MAPS)["has_issues"] is False
+    assert lint_description_codes(float("nan"), LINT_MAPS)["has_issues"] is False
+
+
 # ── Runner autonome (sans pytest) ────────────────────────────────────────────
 
 if __name__ == "__main__":

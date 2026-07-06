@@ -452,8 +452,9 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
                 code = _get_rich_text(props.get("code_plante", {}))
                 if code:
                     v_code[code.upper()] = pid
-                    if latin:
-                        v_code_names[code.upper()] = latin
+                    # Toujours peupler le nom (repli sur le code si pas de latin)
+                    # pour ne pas afficher un nom vide dans le référentiel.
+                    v_code_names[code.upper()] = latin or code
                 # nom_vernaculaire_fr — peut contenir plusieurs noms séparés par ; ou ,
                 fr_raw = _get_rich_text(props.get("nom_vernaculaire_fr", {}))
                 if fr_raw:
@@ -775,7 +776,10 @@ def lint_description_codes(description: str, maps: dict | None = None) -> dict:
         "at_warnings": [],
         "has_issues": False,
     }
-    if not description:
+    # Robustesse : une Description non-textuelle (ex. NaN pandas venant d'un
+    # DataFrame) ne doit pas atteindre .split() plus bas → on la traite comme
+    # « rien à linter ».
+    if not isinstance(description, str) or not description:
         return result
 
     maps = maps or {}

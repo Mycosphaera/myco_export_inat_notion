@@ -2479,15 +2479,21 @@ elif nav_mode == "📊 Tableau de Bord":
         # corriger AVANT d'importer (sinon = relations non liées = « trous »).
         _lint_maps = st.session_state.get("enricher_maps")
         if _lint_maps:
+            # Itération colonne-par-colonne (zip) plutôt qu'iterrows() — plus léger
+            # à chaque rerun ; lint_description_codes tolère les valeurs non-texte.
+            _n = len(df_main)
+            _ids   = df_main["ID"]          if "ID" in df_main.columns          else [""] * _n
+            _taxa  = df_main["Taxon"]       if "Taxon" in df_main.columns       else [""] * _n
+            _descs = df_main["Description"] if "Description" in df_main.columns else [""] * _n
             _bad_rows = []
             _total_ok = 0
-            for _, _row in df_main.iterrows():
-                _lr = enricher.lint_description_codes(_row.get("Description", ""), _lint_maps)
+            for _id, _taxon, _desc in zip(_ids, _taxa, _descs):
+                _lr = enricher.lint_description_codes(_desc, _lint_maps)
                 _total_ok += len(_lr["recognized"])
                 if _lr["has_issues"]:
                     _bad_rows.append({
-                        "ID": _row.get("ID", ""),
-                        "Taxon": _row.get("Taxon", ""),
+                        "ID": _id,
+                        "Taxon": _taxon,
                         "Codes non reconnus": ", ".join(u["token"] for u in _lr["unrecognized"]),
                         "@ à éviter": ", ".join(_lr["at_warnings"]),
                     })
@@ -2503,7 +2509,7 @@ elif nav_mode == "📊 Tableau de Bord":
             elif _total_ok:
                 st.success(f"✅ Codes des notes iNat : tous reconnus ({_total_ok}).")
             # Aucun code utilisé → on reste silencieux (rien à vérifier).
-        else:
+        elif NOTION_TOKEN:
             _lc1, _lc2 = st.columns([3, 1])
             _lc1.caption("🔎 Vérification des codes désactivée (référentiels non chargés).")
             if _lc2.button("Activer la vérification"):
