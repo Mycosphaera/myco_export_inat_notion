@@ -10,7 +10,7 @@ Remplace les automations natives Notion pour :
 
 Convention de codes dans le champ Notes iNat (= Description rapide après import) :
   *FSL01          → Station d'inventaire (et Projet déduit du préfixe alphabétique)
-  #coll           → Fongarium (checkbox)
+  #coll / *coll   → Fongarium (checkbox) — les DEUX préfixes sont acceptés
   !BOM            → Habitat général (via "Code terrain" de la BD Habitats)
   $BMC            → Substrat (via "Code terrain" de la BD Substrats)
   #BOJ            → Végétation (via "code_plante" de la BD Plantes)
@@ -585,7 +585,7 @@ def parse_description_codes(
     Extrait les codes terrain depuis Description rapide selon la convention :
 
       *FSL01          → Station d'inventaire (+ projet déduit du préfixe alpha)
-      #coll           → Fongarium (checkbox)
+      #coll / *coll   → Fongarium (checkbox) — les deux préfixes acceptés
       !BOM            → Habitat général (via "Code terrain")
       $BMC            → Substrat (via "Code terrain")
       #BOJ            → Végétation (via code_plante)
@@ -637,10 +637,14 @@ def parse_description_codes(
     for raw in description.split():
         if not raw:
             continue
-        # *XXX → Station d'inventaire (+ Projet déduit du préfixe alpha)
+        # *XXX → Station d'inventaire (+ Projet déduit du préfixe alpha).
+        # Cas spécial : *coll est accepté comme SYNONYME de #coll (Fongarium) —
+        # certains membres tapent * au lieu de #. On tolère les deux.
         if raw.startswith("*"):
             code = _strip_punct(raw[1:]).upper()
-            if code and code in station_map:
+            if code == "COLL":
+                result["has_coll"] = True
+            elif code and code in station_map:
                 result["station_code"] = code
                 result["projet_page_id"] = None
                 if projet_map:
