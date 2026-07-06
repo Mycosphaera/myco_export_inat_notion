@@ -27,6 +27,19 @@ _HELP_PSEUDO = (
 )
 
 
+def resolve_search_user_id(inat_user_id, inat_login: str | None) -> str:
+    """Identifiant à passer à l'API iNat comme `user_id` de recherche.
+
+    Priorité à l'**ID NUMÉRIQUE** (`inat_user_id`) : un id numérique ne renvoie
+    jamais 422, contrairement à un login mal formé (courriel, typo). Repli sur le
+    `login` sinon. Retourne "" si aucun des deux n'est exploitable.
+    """
+    uid = ("" if inat_user_id is None else str(inat_user_id)).strip()
+    if uid.isdigit():
+        return uid
+    return (inat_login or "").strip()
+
+
 def looks_like_invalid_inat_username(username: str | None) -> bool:
     """Heuristique RAPIDE et SANS réseau pour le bandeau d'alerte du dashboard.
 

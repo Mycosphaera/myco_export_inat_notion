@@ -51,7 +51,7 @@ def get_user_by_email(email):
         print(f"Erreur DB (get_user): {e}")
         return None
 
-def create_user_profile(email, notion_name, inat_username, notion_portail_page_id=None):
+def create_user_profile(email, notion_name, inat_username, notion_portail_page_id=None, inat_user_id=None):
     """
     Crée un nouveau profil utilisateur.
 
@@ -63,6 +63,9 @@ def create_user_profile(email, notion_name, inat_username, notion_portail_page_i
             (utilisé pour remplir la colonne `Mycologue (relation)` à l'import).
             Obligatoire pour les nouveaux signups, mais accepté comme None pour
             les chemins de code legacy ou les tests.
+        inat_user_id: ID numérique iNaturalist (str) — ancre de recherche robuste
+            (jamais de 422). Optionnel ; ignoré proprement si la colonne
+            `inat_user_id` n'a pas encore été ajoutée à la table (migration).
     """
     if not supabase:
         return False
@@ -75,22 +78,35 @@ def create_user_profile(email, notion_name, inat_username, notion_portail_page_i
     }
     if notion_portail_page_id:
         new_user["notion_portail_page_id"] = notion_portail_page_id
-    
+    if inat_user_id:
+        new_user["inat_user_id"] = str(inat_user_id)
+
     try:
         response = supabase.table("user_profiles").insert(new_user).execute()
         # Vérification loose car l'API change parfois
-        if response.data: 
+        if response.data:
             return True
         return True # Si pas d'exception, on suppose que ça a marché (API v2 retourne parfois data=[...])
     except Exception as e:
+        err_msg = str(e).lower()
+        # Colonne `inat_user_id` pas encore migrée → on réessaie SANS, pour ne
+        # jamais bloquer la création de compte (l'ALTER TABLE peut suivre).
+        if "inat_user_id" in new_user and "inat_user_id" in err_msg and (
+            "column" in err_msg or "does not exist" in err_msg or "schema cache" in err_msg
+        ):
+            new_user.pop("inat_user_id", None)
+            try:
+                supabase.table("user_profiles").insert(new_user).execute()
+                return True
+            except Exception as e2:
+                e, err_msg = e2, str(e2).lower()
         print(f"Erreur Création Profil: {e}")
         # Detect Duplicate Key Error (Postgres Code 23505)
         # Supabase-py often matches strings in message
-        err_msg = str(e).lower()
         if "duplicate key" in err_msg or "unique constraint" in err_msg:
              st.error("⚠️ Ce compte existe déjà ! Essayez de vous connecter.")
              return False
-        
+
         st.error(f"Erreur technique: {e}")
         return False
 
@@ -108,9 +124,21 @@ def update_user_profile(user_id, updates):
     """
     if not supabase:
         return "Erreur de connexion Supabase."
-    
+
     try:
-        response = supabase.table("user_profiles").update(updates).eq("id", user_id).execute()
+        supabase.table("user_profiles").update(updates).eq("id", user_id).execute()
         return True
     except Exception as e:
+        err = str(e).lower()
+        # Colonne `inat_user_id` pas encore migrée → réessaie SANS, pour ne pas
+        # bloquer la sauvegarde des autres champs (l'ALTER TABLE peut suivre).
+        if "inat_user_id" in updates and "inat_user_id" in err and (
+            "column" in err or "does not exist" in err or "schema cache" in err
+        ):
+            reduced = {k: v for k, v in updates.items() if k != "inat_user_id"}
+            try:
+                supabase.table("user_profiles").update(reduced).eq("id", user_id).execute()
+                return True
+            except Exception as e2:
+                return f"Erreur lors de la mise à jour: {e2}"
         return f"Erreur lors de la mise à jour: {e}"
