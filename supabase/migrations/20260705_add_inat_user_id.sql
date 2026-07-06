@@ -6,6 +6,7 @@
 -- Idempotent : safe to re-run. The app also degrades gracefully if this column
 --          is missing (create/update_user_profile retry without it), so it can
 --          be applied at any time.
+-- Applied to project lcnkefumkqsswptfkhql (Fongarium-manager) on 2026-07-06 via Supabase MCP.
 
 alter table public.user_profiles
     add column if not exists inat_user_id text;
