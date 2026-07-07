@@ -730,11 +730,15 @@ def portail_setup_gate():
     with _mc2:
         gate_mode = st.radio(
             "As-tu déjà une page « Portail du mycologue » ?",
-            ["📄 Oui — la sélectionner", "➕ Non / je ne trouve pas mon nom — créer ma page"],
+            options=["select", "create"],  # valeurs stables, découplées du libellé
+            format_func=lambda v: (
+                "📄 Oui — la sélectionner" if v == "select"
+                else "➕ Non / je ne trouve pas mon nom — créer ma page"
+            ),
             key="gate_mode",
         )
 
-    if gate_mode.startswith("➕"):
+    if gate_mode == "create":
         _cc1, _cc2, _cc3 = st.columns([1, 2, 1])
         with _cc2:
             st.caption("On crée ta page en 3 champs, puis on la lie automatiquement à ton profil.")
