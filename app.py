@@ -1282,7 +1282,48 @@ if nav_mode == "👤 Mon Profil":
     
     # Fetch latest data from verified DB record
     u_data = st.session_state.user_info
-    
+
+    # ── Statut de routage : l'utilisateur VOIT que son compte est bien lié ──
+    # 100 % depuis la session (instantané, 0 requête) ; les deep-links permettent
+    # de vérifier d'un clic. Répond à « comment je sais que mon compte est routé ? ».
+    _pid = (u_data.get("notion_portail_page_id") or "").strip()
+    _inat = (u_data.get("inat_username") or "").strip()
+    _iuid = (u_data.get("inat_user_id") or "").strip()
+    _prefix = (u_data.get("fongarium_prefix") or "").strip()
+    with st.container(border=True):
+        st.markdown("#### 🔗 Statut de ton compte")
+        if _pid:
+            st.markdown(
+                "✅ **Page Portail du mycologue** : liée — "
+                f"[Ouvrir sur Notion](https://notion.so/{_pid.replace('-', '')})"
+            )
+        else:
+            st.markdown(
+                "⚠️ **Page Portail du mycologue** : NON liée. Déconnecte-toi puis "
+                "reconnecte-toi pour passer par l'étape de liaison / création."
+            )
+        if _inat and not looks_like_invalid_inat_username(_inat):
+            _id_txt = (
+                f" · ID numérique **{_iuid}**" if _iuid.isdigit()
+                else " · ⚠️ ID numérique non capté (repli sur le pseudo)"
+            )
+            st.markdown(
+                f"✅ **Compte iNaturalist** : @{_inat}{_id_txt} — "
+                f"[Voir le profil](https://www.inaturalist.org/people/{_inat})"
+            )
+        else:
+            st.markdown("⚠️ **Compte iNaturalist** : pseudo manquant ou invalide — corrige-le ci-dessous.")
+        st.markdown(
+            f"✅ **Préfixe Fongarium** : `{_prefix}`" if _prefix
+            else "⚠️ **Préfixe Fongarium** : non défini — renseigne-le ci-dessous."
+        )
+        if _pid and _inat and not looks_like_invalid_inat_username(_inat):
+            st.caption(
+                "→ Tout est en place : tes observations importées se rattachent à ta "
+                "page via `Mycologue (relation)`, et tes recherches iNat passent par "
+                "ton ID numérique (jamais de 422)."
+            )
+
     with st.form("profile_update_form"):
         col_p1, col_p2 = st.columns(2)
         with col_p1:
