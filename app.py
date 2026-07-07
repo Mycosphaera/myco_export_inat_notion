@@ -376,6 +376,47 @@ def fetch_portail_pages(token):
     return results
 
 
+def create_portail_page(token, nom_complet, inat_login="", inat_user_id="", email="", alias=""):
+    """Crée une page dans la BD « Portail du mycologue » Notion (onboarding
+    self-service). Retourne ``(page_id, None)`` si OK, sinon ``(None, message_fr)``.
+
+    Ne fait PAS de dédup : l'appelant DOIT avoir vérifié l'absence d'une page avec
+    ce login iNat (via `fetch_portail_pages`) pour ne pas polluer la BD. Noms de
+    propriétés = ceux EXACTS de la BD (vérifiés) ; page minimale — les autres
+    champs (Cercles, Statut…) sont enrichis plus tard par l'admin.
+    """
+    if not token or not PORTAIL_MYCOLOGUE_DB_ID:
+        return None, "Configuration Notion manquante (PORTAIL_MYCOLOGUE_DB_ID)."
+    nom = (nom_complet or "").strip()
+    if not nom:
+        return None, "Nom complet requis pour créer la page."
+    props = {"Nom complet": {"title": [{"text": {"content": nom}}]}}
+    if inat_login:
+        props["Inaturalist (nom d'utilisateur)"] = {"rich_text": [{"text": {"content": inat_login}}]}
+    if inat_user_id:
+        props["iNaturalist ID"] = {"rich_text": [{"text": {"content": str(inat_user_id)}}]}
+    if alias:
+        props["Alias dans la BD Observations"] = {"rich_text": [{"text": {"content": alias}}]}
+    if email:
+        props["Email"] = {"email": email}
+    try:
+        resp = requests.post(
+            "https://api.notion.com/v1/pages",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Notion-Version": "2022-06-28",
+                "Content-Type": "application/json",
+            },
+            json={"parent": {"database_id": PORTAIL_MYCOLOGUE_DB_ID}, "properties": props},
+            timeout=30,
+        )
+        if resp.status_code in (200, 201):
+            return resp.json().get("id"), None
+        return None, f"Notion HTTP {resp.status_code} : {resp.text[:200]}"
+    except Exception as e:
+        return None, f"Erreur réseau Notion : {e}"
+
+
 def find_portail_page_by_inat(token, inat_login):
     """
     Recherche une page Portail du mycologue par login iNat (insensible à la casse).
@@ -530,10 +571,18 @@ def login_page():
 
                     # Fallback Logic: Si la liste est vide (erreur ou pas de droits), on met un champ texte libre
                     if myco_options:
-                        reg_notion_name = st.selectbox("Votre Nom sur Notion (Mycologue)", options=myco_options)
+                        reg_notion_name = st.selectbox(
+                            "Votre Nom (Mycologue) — dans la liste",
+                            options=["— Choisir —"] + myco_options,
+                        )
+                        reg_new_name = st.text_input(
+                            "…ou saisis ton nom s'il n'est PAS dans la liste (nouveau membre)",
+                            placeholder="Prénom Nom",
+                        )
                     else:
                         st.warning("⚠️ Impossible de charger la liste Notion (droits insuffisants ?). Entrez votre nom manuellement.")
-                        reg_notion_name = st.text_input("Votre Nom sur Notion (Mycologue)")
+                        reg_notion_name = st.text_input("Votre Nom (Mycologue)")
+                        reg_new_name = ""
 
                     reg_inat = st.text_input(
                         "Votre Nom d'utilisateur iNaturalist",
@@ -543,12 +592,11 @@ def login_page():
                              "échoueront.",
                     )
 
-                    # Sélection de la page Portail du mycologue (obligatoire)
-                    st.markdown("**Votre page Portail du mycologue sur Notion**")
+                    # Sélection de la page Portail du mycologue (OPTIONNELLE ici)
+                    st.markdown("**Votre page Portail du mycologue** (optionnel)")
                     st.caption(
-                        "Cette page sera liée à chacune de vos observations importées "
-                        "(colonne `Mycologue (relation)` dans la BD Observations). "
-                        "Ta page existe probablement déjà — choisis-la dans la liste."
+                        "Si ta page existe déjà, choisis-la. Sinon **laisse vide** — "
+                        "tu pourras la créer en un clic juste après la connexion."
                     )
                     reg_portail_page_id = None
                     if portail_pages:
@@ -571,10 +619,14 @@ def login_page():
                         )
 
                     if st.form_submit_button("Finaliser mon portail"):
-                        # Réconciliation d'identité : si l'utilisateur réclame sa
-                        # page Portail, le pseudo iNat + l'ID numérique de la BD
-                        # curée FONT AUTORITÉ (évite la ressaisie et les 422) ;
-                        # sinon on valide la saisie manuelle.
+                        # Nom : la saisie libre (nouveau membre) prime sur le choix
+                        # dans la liste (« — Choisir — » = pas de sélection).
+                        effective_name = (reg_new_name or "").strip()
+                        if not effective_name and reg_notion_name and reg_notion_name != "— Choisir —":
+                            effective_name = reg_notion_name.strip()
+
+                        # Réconciliation d'identité : si une page Portail est réclamée,
+                        # son pseudo + ID FONT AUTORITÉ ; sinon on valide la saisie.
                         page_login, page_uid = "", ""
                         if reg_portail_page_id and portail_choice:
                             page_login = (portail_choice.get("inat_login") or "").strip()
@@ -583,27 +635,22 @@ def login_page():
                         if page_login:
                             inat_login, inat_err = page_login, None
                         elif page_uid:
-                            # La page fournit l'ID numérique (ancre suffisante) sans
-                            # login → inutile d'exiger un pseudo saisi ; l'ID seul suffit.
                             inat_login, inat_err = "", None
                         else:
-                            # Saisie manuelle : on valide ET on capte l'ID numérique
-                            # (l'autocomplete le renvoie) → ancre robuste même sans page.
                             inat_login, inat_uid_val, inat_err = resolve_inat_identity(reg_inat)
 
-                        if not reg_notion_name:
-                            st.warning("Tout remplir SVP.")
-                        elif portail_pages and not reg_portail_page_id:
-                            st.warning("Sélectionne ta page Portail du mycologue dans la liste.")
+                        if not effective_name:
+                            st.warning("Entre ton nom (choisis dans la liste OU saisis-le).")
                         elif inat_err:
                             st.error(inat_err)
                         elif not inat_login and not page_uid:
-                            st.warning("Entre ton pseudo iNaturalist (ou réclame une page Portail qui le contient).")
+                            st.warning("Entre ton pseudo iNaturalist.")
                         else:
-                            # pseudo/ID = page réclamée (autorité) ou saisie validée.
+                            # Page Portail OPTIONNELLE : si non choisie, l'utilisateur
+                            # la créera/liera au gate juste après la connexion.
                             success = create_user_profile(
                                 st.session_state.reg_email,
-                                reg_notion_name,
+                                effective_name,
                                 inat_login,
                                 notion_portail_page_id=reg_portail_page_id,
                                 inat_user_id=(page_uid or inat_uid_val),
@@ -675,6 +722,106 @@ def portail_setup_gate():
     suggested_prefix = suggest_fongarium_prefix(
         user_info.get("notion_user_name") or "", taken_prefixes
     )
+
+    # ── Réclamer une page existante OU en créer une (self-service). Le radio est
+    #    HORS des formulaires (réactif) ; le mode « créer » rend son propre form
+    #    puis st.stop() pour ne pas afficher le form de sélection en dessous. ──
+    _mc1, _mc2, _mc3 = st.columns([1, 2, 1])
+    with _mc2:
+        gate_mode = st.radio(
+            "As-tu déjà une page « Portail du mycologue » ?",
+            options=["select", "create"],  # valeurs stables, découplées du libellé
+            format_func=lambda v: (
+                "📄 Oui — la sélectionner" if v == "select"
+                else "➕ Non / je ne trouve pas mon nom — créer ma page"
+            ),
+            key="gate_mode",
+        )
+
+    if gate_mode == "create":
+        _cc1, _cc2, _cc3 = st.columns([1, 2, 1])
+        with _cc2:
+            st.caption("On crée ta page en 3 champs, puis on la lie automatiquement à ton profil.")
+            with st.form("portail_create_form"):
+                create_pseudo = st.text_input(
+                    "Ton pseudo iNaturalist",
+                    value=(user_info.get("inat_username") or ""),
+                    help="Le nom dans l'URL de ton profil iNat "
+                         "(inaturalist.org/people/…). On récupère ton ID automatiquement.",
+                )
+                create_nom = st.text_input(
+                    "Ton nom complet",
+                    value=(user_info.get("notion_user_name") or ""),
+                    placeholder="Prénom Nom",
+                )
+                create_prefix = st.text_input(
+                    "Ton préfixe Fongarium",
+                    value=suggested_prefix,
+                    max_chars=8,
+                    placeholder="ex: MRD",
+                    help="Initiales de ton nom, UNIQUE entre membres.",
+                )
+                if suggested_prefix:
+                    st.caption(f"💡 Suggestion : **{suggested_prefix}** (modifiable)")
+                create_submit = st.form_submit_button("Créer ma page et continuer", type="primary")
+                if create_submit:
+                    nom_clean = (create_nom or "").strip()
+                    prefix_clean = (create_prefix or "").strip().upper()
+                    login, uid, id_err = resolve_inat_identity(create_pseudo)
+                    dup = next(
+                        (p for p in portail_pages
+                         if login and (p.get("inat_login") or "").lower() == login.lower()),
+                        None,
+                    )
+                    if not nom_clean:
+                        st.warning("Entre ton nom complet.")
+                    elif id_err:
+                        st.error(id_err)
+                    elif not prefix_clean:
+                        st.warning("Entre ton préfixe Fongarium (ex: MRD).")
+                    elif prefix_clean in taken_prefixes:
+                        _alt = suggest_fongarium_prefix(nom_clean, taken_prefixes | {prefix_clean})
+                        st.error(
+                            f"⚠️ Le préfixe « {prefix_clean} » est déjà pris. "
+                            + (f"Essaie **{_alt}**." if _alt else "Choisis-en un autre.")
+                        )
+                    elif dup:
+                        st.warning(
+                            f"Une page existe déjà pour « {login} » ({dup['nom_complet']}). "
+                            "Repasse en « 📄 Oui — la sélectionner » pour la réclamer."
+                        )
+                    else:
+                        uid_profile = user_info.get("id")
+                        if not uid_profile:
+                            st.error("Profil utilisateur incomplet.")
+                            st.stop()
+                        page_id, cerr = create_portail_page(
+                            NOTION_TOKEN, nom_clean, inat_login=login,
+                            inat_user_id=uid, email=user_info.get("auth_username", ""),
+                            alias=nom_clean,
+                        )
+                        if cerr:
+                            st.error(f"Création de la page échouée : {cerr}")
+                        else:
+                            updates = {
+                                "notion_portail_page_id": page_id,
+                                "fongarium_prefix": prefix_clean,
+                                "inat_username": login,
+                                "inat_user_id": uid,
+                                "notion_user_name": nom_clean,
+                            }
+                            res = update_user_profile(uid_profile, updates)
+                            if res is True:
+                                st.session_state.user_info.update(updates)
+                                st.session_state.username = nom_clean
+                                st.session_state.inat_username = login
+                                st.session_state.inat_user_id = uid
+                                st.session_state.selected_users = [login]
+                                st.success(f"✅ Page créée : {nom_clean} · {prefix_clean}")
+                                st.rerun()
+                            else:
+                                st.error(f"Erreur lors de l'enregistrement : {res}")
+        st.stop()
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
