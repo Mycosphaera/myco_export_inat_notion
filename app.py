@@ -1318,8 +1318,9 @@ if nav_mode == "👤 Mon Profil":
         )
         if _floor > 0:
             st.markdown(
-                f"📍 **Continuité fongarium** : dernier n° hors app = **{_floor}** → "
-                f"la numérotation continue à **{_prefix or ''}{_floor + 1:04d}**."
+                f"📍 **Continuité fongarium** : ton dernier n° hors app = **{_floor}**. "
+                "Tes prochains numéros repartiront **au-dessus de ça** (ou du plus grand "
+                "déjà enregistré dans l'app s'il est plus haut) — jamais en arrière."
             )
         if _pid and _inat and not looks_like_invalid_inat_username(_inat):
             st.caption(
