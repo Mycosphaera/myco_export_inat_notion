@@ -1617,7 +1617,8 @@ elif nav_mode == "📊 Tableau de Bord":
                  try:
                      last_fong, next_fong = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
                      fong_ok = True
-                 except Exception:
+                 except Exception as e:
+                     print(f"[fongarium] dashboard: échec lecture Notion (user={st.session_state.username!r}, prefix={prefix!r}): {e}")
                      last_fong, next_fong, fong_ok = None, None, False
                  if not fong_ok:
                      st.metric(label="Fongarium", value="--", help="Lecture Notion momentanément indisponible — réessaie plus tard.")
@@ -2950,7 +2951,8 @@ elif nav_mode == "📊 Tableau de Bord":
                 with st.spinner("Calcul..."):
                      try:
                          last_f, next_start = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
-                     except Exception:
+                     except Exception as e:
+                         print(f"[fongarium] import: échec lecture Notion (user={st.session_state.username!r}, prefix={prefix!r}): {e}")
                          st.error("Lecture Notion du dernier n° de fongarium impossible pour l'instant — réessaie dans un moment (aucun numéro attribué, pour éviter un doublon).")
                          st.stop()
                      
