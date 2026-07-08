@@ -1612,8 +1612,16 @@ elif nav_mode == "📊 Tableau de Bord":
              prefix = user_info.get("fongarium_prefix")
              
              if prefix:
-                 last_fong, next_fong = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
-                 if last_fong:
+                 # Lecture Notion tolérante : une erreur (429/timeout/filtre) ne doit
+                 # JAMAIS crasher le tableau de bord — on dégrade en « -- ».
+                 try:
+                     last_fong, next_fong = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
+                     fong_ok = True
+                 except Exception:
+                     last_fong, next_fong, fong_ok = None, None, False
+                 if not fong_ok:
+                     st.metric(label="Fongarium", value="--", help="Lecture Notion momentanément indisponible — réessaie plus tard.")
+                 elif last_fong:
                      delta_msg = f"Suivant: {next_fong}" if next_fong else "Suivant: +1"
                      st.metric(label="Fongarium (Dernier)", value=last_fong, delta=delta_msg)
                  else:
@@ -2940,7 +2948,11 @@ elif nav_mode == "📊 Tableau de Bord":
                  st.error("Configurez votre préfixe dans 'Mon Profil' !")
              else:
                 with st.spinner("Calcul..."):
-                     last_f, next_start = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
+                     try:
+                         last_f, next_start = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
+                     except Exception:
+                         st.error("Lecture Notion du dernier n° de fongarium impossible pour l'instant — réessaie dans un moment (aucun numéro attribué, pour éviter un doublon).")
+                         st.stop()
                      
                      if not next_start:
                          next_start = f"{prefix}0001"
