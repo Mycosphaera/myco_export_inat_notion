@@ -61,3 +61,26 @@ def suggest_fongarium_prefix(name: str | None, taken=None) -> str:
         if c not in taken_up:
             return c
     return base
+
+
+def compute_next_fongarium(prefix, notion_last_num=0, floor=0, pad=4):
+    """Calcule ``(dernier_code, prochain_code)`` en respectant un **plancher**.
+
+    Le plancher (`floor` = dernier n° déjà utilisé HORS app, ex. 42) garantit
+    qu'on ne redescend jamais sous la séquence externe d'un membre qui rejoint en
+    cours de route : ``effectif = max(notion_last_num, floor)``. Une fois que les
+    obs dans l'app dépassent le plancher, Notion reprend la main (auto-péremption).
+
+    - `prefix` : préfixe fongarium (ex. « MRD »).
+    - `notion_last_num` : plus grand n° trouvé dans Notion pour ce user+préfixe (0 si aucun).
+    - `floor` : dernier n° déclaré hors app (0 si aucun).
+    - `pad` : largeur de zéro-padding (min 4).
+
+    Retourne ``(None, None)`` si aucun numéro (ni Notion ni plancher) → l'appelant
+    défaute alors à `{prefix}0001`.
+    """
+    effective = max(int(notion_last_num or 0), int(floor or 0))
+    if effective <= 0:
+        return None, None
+    pad = max(int(pad or 0), 4)
+    return f"{prefix}{effective:0{pad}d}", f"{prefix}{effective + 1:0{pad}d}"
