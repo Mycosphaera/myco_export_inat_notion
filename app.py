@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from labels import generate_label_pdf
 from database import get_user_by_email, create_user_profile, update_user_profile, get_taken_fongarium_prefixes
 from inat_validation import validate_inat_username, resolve_inat_identity, looks_like_invalid_inat_username, resolve_search_user_id
-from fongarium import suggest_fongarium_prefix
+from fongarium import suggest_fongarium_prefix, compute_next_fongarium
 
 import re
 import time
@@ -1041,16 +1041,19 @@ def count_user_notion_obs(token, db_id, target_user):
     return total_count
 
 @st.cache_data(ttl=600, show_spinner=False)
-def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
+def get_last_fongarium_number_v2(token, db_id, target_user, prefix, floor=0):
     """
     Récupère le dernier numéro de fongarium attribué pour un utilisateur.
-    
+
     Args:
         token (str): Token d'intégration Notion.
         db_id (str): ID de la base de données.
         target_user (str): Nom du mycologue.
         prefix (str): Préfixe du code fongarium (ex: 'MRD').
-        
+        floor (int): Plancher = dernier n° déjà utilisé HORS app (0 si aucun). Le
+            prochain n° ne descend jamais sous ce plancher — continuité pour un
+            membre qui rejoint en cours de route avec une séquence externe.
+
     Returns:
         tuple: (dernier_code_trouvé, code_suivant_suggéré)
     """
@@ -1103,36 +1106,31 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix):
             
         data = resp.json()
         results = data.get("results", [])
-        
+
+        # Scan TOUS les résultats pour le vrai max NUMÉRIQUE (le tri Notion est
+        # alphabétique → peut mal ordonner si le padding varie). Puis on applique
+        # le plancher via compute_next_fongarium (jamais en arrière).
+        notion_last_num = 0
+        pad = 4
         for r in results:
             props = r["properties"]
-            fong_val = constants_extract_text(props.get("No° fongarium", {}))
-            if not fong_val:
-                 fong_val = constants_extract_text(props.get("No fongarium", {}))
-            
+            fong_val = constants_extract_text(props.get("No° fongarium", {})) \
+                or constants_extract_text(props.get("No fongarium", {}))
             if fong_val and regex_pattern.match(fong_val.strip()):
-                # Found a match!
-                last_val = fong_val.strip()
-                
-                # Calculate Next
+                num_part_str = fong_val.strip()[len(prefix):]
                 try:
-                    # Extract number part
-                    # Remove prefix (case insensitive replace)
-                    num_part_str = last_val[len(prefix):]
-                    num_val = int(num_part_str)
-                    next_num = num_val + 1
-                    # Format with same padding? len(num_part_str)
-                    next_val_str = f"{next_num:0{len(num_part_str)}d}"
-                    next_code = f"{prefix}{next_val_str}"
-                    return last_val, next_code
-                except:
-                    return last_val, None
-            
+                    n = int(num_part_str)
+                except ValueError:
+                    continue
+                if n > notion_last_num:
+                    notion_last_num = n
+                    pad = len(num_part_str)
+
+        return compute_next_fongarium(prefix, notion_last_num, floor, pad)
+
     except Exception as e:
         print(f"Fongarium Fetch Error: {e}")
         raise
-        
-    return None, None
 
 @st.cache_data(ttl=300, show_spinner="Chargement Notion...")
 def fetch_notion_data(token, db_id, notion_filter_and, max_fetch=50):
@@ -1290,6 +1288,7 @@ if nav_mode == "👤 Mon Profil":
     _inat = (u_data.get("inat_username") or "").strip()
     _iuid = (u_data.get("inat_user_id") or "").strip()
     _prefix = (u_data.get("fongarium_prefix") or "").strip()
+    _floor = int(u_data.get("fongarium_start") or 0)
     with st.container(border=True):
         st.markdown("#### 🔗 Statut de ton compte")
         if _pid:
@@ -1317,6 +1316,11 @@ if nav_mode == "👤 Mon Profil":
             f"✅ **Préfixe Fongarium** : `{_prefix}`" if _prefix
             else "⚠️ **Préfixe Fongarium** : non défini — renseigne-le ci-dessous."
         )
+        if _floor > 0:
+            st.markdown(
+                f"📍 **Continuité fongarium** : dernier n° hors app = **{_floor}** → "
+                f"la numérotation continue à **{_prefix or ''}{_floor + 1:04d}**."
+            )
         if _pid and _inat and not looks_like_invalid_inat_username(_inat):
             st.caption(
                 "→ Tout est en place : tes observations importées se rattachent à ta "
@@ -1338,6 +1342,14 @@ if nav_mode == "👤 Mon Profil":
         with col_p2:
             # New Fields (Optional, might error if cols missing)
             new_prefix = st.text_input("Préfixe Fongarium", value=u_data.get("fongarium_prefix", ""), placeholder="ex: MRD", help="Initiales de ton nom (ex: « Mathias Rocheleau-Duplain » → MRD). Doit être UNIQUE entre membres.")
+            new_fong_start = st.number_input(
+                "Dernier n° de fongarium déjà utilisé (HORS app)",
+                min_value=0, step=1,
+                value=int(u_data.get("fongarium_start") or 0),
+                help="Si tu arrives avec une numérotation existante (iNat, tes fichiers), "
+                     "indique ton DERNIER n° utilisé (ex: 42) : la numérotation de l'app "
+                     "continuera à partir de là (jamais en arrière). Laisse 0 sinon.",
+            )
             new_photo = st.text_input("URL Photo de Profil", value=u_data.get("photo_url", ""), placeholder="https://...")
             new_bio = st.text_area("Bio / Description", value=u_data.get("bio", ""), placeholder="Mycologue passionné...")
             new_fb = st.text_input("Lien Facebook", value=u_data.get("social_fb", ""), placeholder="https://facebook.com/...")
@@ -1388,6 +1400,8 @@ if nav_mode == "👤 Mon Profil":
                 # Try to add optional fields to update dict
                 if new_prefix_clean:
                     updates["fongarium_prefix"] = new_prefix_clean
+                # Plancher fongarium (dernier n° hors app) : 0 → NULL (pas de plancher).
+                updates["fongarium_start"] = int(new_fong_start) if new_fong_start else None
                 if new_photo: updates["photo_url"] = new_photo
                 if new_bio:   updates["bio"] = new_bio
                 if new_fb:    updates["social_fb"] = new_fb
@@ -1615,7 +1629,7 @@ elif nav_mode == "📊 Tableau de Bord":
                  # Lecture Notion tolérante : une erreur (429/timeout/filtre) ne doit
                  # JAMAIS crasher le tableau de bord — on dégrade en « -- ».
                  try:
-                     last_fong, next_fong = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
+                     last_fong, next_fong = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix, floor=int((st.session_state.get("user_info") or {}).get("fongarium_start") or 0))
                      fong_ok = True
                  except Exception as e:
                      print(f"[fongarium] dashboard: échec lecture Notion (user={st.session_state.username!r}, prefix={prefix!r}): {e}")
@@ -2950,7 +2964,7 @@ elif nav_mode == "📊 Tableau de Bord":
              else:
                 with st.spinner("Calcul..."):
                      try:
-                         last_f, next_start = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix)
+                         last_f, next_start = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix, floor=int((st.session_state.get("user_info") or {}).get("fongarium_start") or 0))
                      except Exception as e:
                          print(f"[fongarium] import: échec lecture Notion (user={st.session_state.username!r}, prefix={prefix!r}): {e}")
                          st.error("Lecture Notion du dernier n° de fongarium impossible pour l'instant — réessaie dans un moment (aucun numéro attribué, pour éviter un doublon).")

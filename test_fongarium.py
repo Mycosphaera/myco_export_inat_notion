@@ -3,7 +3,7 @@
 Lance avec `pytest test_fongarium.py` OU `python test_fongarium.py`.
 """
 
-from fongarium import suggest_fongarium_prefix
+from fongarium import suggest_fongarium_prefix, compute_next_fongarium
 
 
 def test_initiales_simples():
@@ -47,6 +47,32 @@ def test_collision_suffixe_numerique_en_dernier_recours():
     # Extensions épuisées (base 'A', seule lettre suivante 'l' → 'AL' déjà pris)
     # → repli sur le suffixe numérique.
     assert suggest_fongarium_prefix("Al", taken={"A", "AL"}) == "A2"
+
+
+def test_compute_next_plancher_pilote_quand_notion_vide():
+    # Nouveau venu : rien dans Notion, plancher 42 → continue à 43.
+    assert compute_next_fongarium("MRD", notion_last_num=0, floor=42) == ("MRD0042", "MRD0043")
+
+
+def test_compute_next_notion_pilote_quand_plus_grand():
+    # Notion (50) dépasse le plancher (42) → Notion gagne.
+    assert compute_next_fongarium("MRD", notion_last_num=50, floor=42) == ("MRD0050", "MRD0051")
+
+
+def test_compute_next_egalite_plancher_notion():
+    assert compute_next_fongarium("MRD", notion_last_num=42, floor=42) == ("MRD0042", "MRD0043")
+
+
+def test_compute_next_rien_du_tout():
+    assert compute_next_fongarium("MRD", notion_last_num=0, floor=0) == (None, None)
+
+
+def test_compute_next_padding_min_4():
+    assert compute_next_fongarium("MRD", notion_last_num=5, floor=0, pad=2) == ("MRD0005", "MRD0006")
+
+
+def test_compute_next_plancher_ignore_si_negatif_ou_none():
+    assert compute_next_fongarium("MRD", notion_last_num=7, floor=None) == ("MRD0007", "MRD0008")
 
 
 if __name__ == "__main__":
