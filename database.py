@@ -89,7 +89,12 @@ def create_user_profile(email, notion_name, inat_username, notion_portail_page_i
         "auth_username": email,       # On utilise l'email comme identifiant unique
         "notion_user_name": notion_name, # CORRECTION: Nom de colonne réel
         "inat_username": inat_username,
-        "password": "NO_PASSWORD"     # Champ technique rempli par défaut
+        # `password` n'est plus écrit. La colonne ne portait rien : la chaîne
+        # littérale « NO_PASSWORD » sur les 17 lignes de la table, mesuré le
+        # 2026-08-25. L'authentification passe par Supabase Auth, jamais par
+        # cette colonne — qui est supprimée par migration juste après ce commit.
+        # Retirer l'écriture AVANT le DROP : dans l'autre ordre, l'insertion
+        # échouerait et la création de comptes serait cassée entre les deux.
     }
     if notion_portail_page_id:
         new_user["notion_portail_page_id"] = notion_portail_page_id
