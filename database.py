@@ -92,9 +92,21 @@ def create_user_profile(email, notion_name, inat_username, notion_portail_page_i
         # `password` n'est plus écrit. La colonne ne portait rien : la chaîne
         # littérale « NO_PASSWORD » sur les 17 lignes de la table, mesuré le
         # 2026-08-25. L'authentification passe par Supabase Auth, jamais par
-        # cette colonne — qui est supprimée par migration juste après ce commit.
-        # Retirer l'écriture AVANT le DROP : dans l'autre ordre, l'insertion
-        # échouerait et la création de comptes serait cassée entre les deux.
+        # cette colonne.
+        #
+        # ETAT REEL DE LA COLONNE, au 2026-08-25 : elle EXISTE ENCORE en base.
+        # Elle est nullable, et verrouillée par une contrainte
+        # `CHECK (password IS NULL OR password = 'NO_PASSWORD')` posée par la
+        # migration `20260825100000` du dépôt `fongarium-manager` — parce que le
+        # rôle `anon` garde l'`UPDATE` sur cette table tant que la policy
+        # `FOR ALL USING (true)` n'est pas refermée. Ne plus rien écrire ici
+        # laisse donc `password` à NULL sur les nouveaux comptes : la contrainte
+        # l'accepte, rien ne casse.
+        #
+        # Son `DROP COLUMN` fera l'objet d'une PR distincte, ouverte APRES que
+        # celle-ci soit fusionnée ET déployée. C'est l'ordre qui compte : dans
+        # l'autre sens, l'insertion échouerait et la création de comptes serait
+        # cassée entre les deux.
     }
     if notion_portail_page_id:
         new_user["notion_portail_page_id"] = notion_portail_page_id
