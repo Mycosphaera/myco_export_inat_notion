@@ -3457,6 +3457,21 @@ elif nav_mode == "📊 Tableau de Bord":
                             except Exception as coord_err:
                                 print(f"Coord parse warning for {obs_id}: {coord_err}")
 
+                        # --- QUALITE DES COORDONNEES (2026-09-13) ---
+                        # La provenance n'est pas la qualite : « ca vient d'iNaturalist » ne
+                        # prouve pas un releve de terrain. On signe le point avec le rayon
+                        # que l'observation porte deja. Ce bloc etait le seul angle mort de
+                        # ce fichier — la voie Flickr fait deja ce raisonnement
+                        # (_is_gps_suspect dans flickr_fetcher.py).
+                        try:
+                            from qualite_coordonnees import proprietes_notion
+                            props.update(proprietes_notion(obs_obj, db_props_schema))
+                        except Exception as qc_err:
+                            # Ne JAMAIS faire echouer un import pour une signature de
+                            # qualite : la colonne reste vide, ce qui est honnete, et
+                            # l'audit la rattrapera.
+                            print(f"Qualite coord warning for {obs_id}: {qc_err}")
+
                         # --- SEND TO NOTION WITH RETRY ---
                         def call_notion_with_retry(func, **kwargs):
                             max_retries = 5
