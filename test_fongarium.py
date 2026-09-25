@@ -3,7 +3,17 @@
 Lance avec `pytest test_fongarium.py` OU `python test_fongarium.py`.
 """
 
-from fongarium import suggest_fongarium_prefix, compute_next_fongarium
+from fongarium import suggest_fongarium_prefix, compute_next_fongarium, is_unknown_select_option_error
+
+# Réponse RÉELLE de Notion (mesurée le 2026-09-25) pour un nom absent des options
+# du select « Mycologue » — le cas d'un nouveau membre avant son premier import.
+_NOTION_400_OPTION_INCONNUE = {
+    "object": "error",
+    "status": 400,
+    "code": "validation_error",
+    "message": 'select option "Zzz Observatrice Inexistante" not found for property "Mycologue". '
+               'Available options: " Suzanne Béland", "Acerbus Spinosus", "Alain Victor"',
+}
 
 
 def test_initiales_simples():
@@ -73,6 +83,26 @@ def test_compute_next_padding_min_4():
 
 def test_compute_next_plancher_ignore_si_negatif_ou_none():
     assert compute_next_fongarium("MRD", notion_last_num=7, floor=None) == ("MRD0007", "MRD0008")
+
+
+def test_option_inconnue_nouveau_membre_reconnue():
+    # Nouveau membre : Notion refuse le filtre → ce n'est PAS une panne.
+    assert is_unknown_select_option_error(400, _NOTION_400_OPTION_INCONNUE) is True
+
+
+def test_option_inconnue_autre_propriete_pas_confondue():
+    # Même refus mais sur une autre colonne : on ne l'interprète pas comme « aucun n° ».
+    assert is_unknown_select_option_error(400, _NOTION_400_OPTION_INCONNUE, property_name="Identificateur") is False
+
+
+def test_vraies_pannes_restent_des_pannes():
+    # 429 (quota), 500, autre 400, corps illisible : on NE dégrade PAS en « aucun n° »
+    # — sinon on attribuerait 0001 à quelqu'un qui a déjà des numéros (doublon).
+    assert is_unknown_select_option_error(429, {"code": "rate_limited", "message": "slow down"}) is False
+    assert is_unknown_select_option_error(500, _NOTION_400_OPTION_INCONNUE) is False
+    assert is_unknown_select_option_error(400, {"code": "validation_error", "message": "body failed validation"}) is False
+    assert is_unknown_select_option_error(400, None) is False
+    assert is_unknown_select_option_error(400, "texte brut") is False
 
 
 if __name__ == "__main__":
