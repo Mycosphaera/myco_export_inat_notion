@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from labels import generate_label_pdf
 from database import get_user_by_email, create_user_profile, update_user_profile, get_taken_fongarium_prefixes
 from inat_validation import validate_inat_username, resolve_inat_identity, looks_like_invalid_inat_username, resolve_search_user_id
-from fongarium import suggest_fongarium_prefix, compute_next_fongarium
+from fongarium import suggest_fongarium_prefix, compute_next_fongarium, is_unknown_select_option_error
 
 import re
 import time
@@ -1066,9 +1066,33 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix, floor=0):
         "Content-Type": "application/json"
     }
 
-    # Payload
-    payload = {
-        "filter": {
+    prefix_clause = {
+        "property": "No° fongarium", # Nom colonne Notion
+        "rich_text": {
+            "starts_with": prefix
+        }
+    }
+
+    def _query(filter_clause):
+        payload = {
+            "filter": filter_clause,
+            "sorts": [
+                {
+                    "property": "No° fongarium",
+                    "direction": "descending" # On veut le plus grand
+                }
+            ],
+            "page_size": 30 # On en prend 30 pour être sûr de sauter les XXXX
+        }
+        # Sort queries in Notion can be slow on large databases, increasing timeout to 60s
+        return requests.post(url, headers=headers, json=payload, timeout=60)
+
+    # Regex strict : Prefix + Digits only (e.g. MRD0015)
+    # Case insensitive match for prefix, but digits at end
+    regex_pattern = re.compile(fr"^{re.escape(prefix)}\d+$", re.IGNORECASE)
+
+    try:
+        resp = _query({
             "and": [
                 {
                     "property": "Mycologue",
@@ -1076,30 +1100,22 @@ def get_last_fongarium_number_v2(token, db_id, target_user, prefix, floor=0):
                         "equals": target_user
                     }
                 },
-                {
-                    "property": "No° fongarium", # Nom colonne Notion
-                    "rich_text": {
-                        "starts_with": prefix
-                    }
-                }
+                prefix_clause,
             ]
-        },
-        "sorts": [
-            {
-                "property": "No° fongarium",
-                "direction": "descending" # On veut le plus grand
-            }
-        ],
-        "page_size": 30 # On en prend 30 pour être sûr de sauter les XXXX
-    }
-
-    # Regex strict : Prefix + Digits only (e.g. MRD0015)
-    # Case insensitive match for prefix, but digits at end
-    regex_pattern = re.compile(fr"^{re.escape(prefix)}\d+$", re.IGNORECASE)
-
-    try:
-        # Sort queries in Notion can be slow on large databases, increasing timeout to 60s
-        resp = requests.post(url, headers=headers, json=payload, timeout=60)
+        })
+        if resp.status_code == 400:
+            try:
+                err_body = resp.json()
+            except ValueError:
+                err_body = None
+            if is_unknown_select_option_error(resp.status_code, err_body, "Mycologue"):
+                # Nouveau membre : son nom n'est pas encore une option du select
+                # « Mycologue » (le 1er import la crée). Notion REFUSE alors le filtre
+                # au lieu de rendre 0 ligne — ce n'est pas une panne, c'est « aucun n° ».
+                # Garde-fou anti-doublon : on relit par préfixe SEUL, au cas où des
+                # spécimens porteraient déjà ce préfixe sous un autre nom de mycologue.
+                print(f"[fongarium] {target_user!r} absent des options Mycologue -> relecture par prefixe seul ({prefix!r})")
+                resp = _query(prefix_clause)
         if resp.status_code != 200:
             print(f"Sort Error: {resp.text}")
             raise RuntimeError(f"Notion fetch failed: {resp.status_code} {resp.text}")
@@ -1641,7 +1657,7 @@ elif nav_mode == "📊 Tableau de Bord":
                      delta_msg = f"Suivant: {next_fong}" if next_fong else "Suivant: +1"
                      st.metric(label="Fongarium (Dernier)", value=last_fong, delta=delta_msg)
                  else:
-                     st.metric(label="Fongarium", value="Aucun", help=f"Aucune entrée trouvée avec le préfixe {prefix}")
+                     st.metric(label="Fongarium", value="Aucun", delta=f"Premier: {prefix}0001", help=f"Aucune entrée trouvée avec le préfixe {prefix} — le premier numéro sera {prefix}0001")
              else:
                  st.metric(label="Fongarium", value="Non configuré", help="Configurez votre préfixe dans 'Mon Profil'")
             
@@ -2964,13 +2980,17 @@ elif nav_mode == "📊 Tableau de Bord":
                  st.error("Configurez votre préfixe dans 'Mon Profil' !")
              else:
                 with st.spinner("Calcul..."):
+                     fong_read_ok = True
                      try:
                          last_f, next_start = get_last_fongarium_number_v2(NOTION_TOKEN, DATABASE_ID, st.session_state.username, prefix, floor=int((st.session_state.get("user_info") or {}).get("fongarium_start") or 0))
                      except Exception as e:
+                         fong_read_ok = False
                          print(f"[fongarium] import: échec lecture Notion (user={st.session_state.username!r}, prefix={prefix!r}): {e}")
+                         # Pas de st.stop() : dans ce fragment, il effaçait aussi le tableau
+                         # des observations affiché plus bas. On refuse seulement d'attribuer.
                          st.error("Lecture Notion du dernier n° de fongarium impossible pour l'instant — réessaie dans un moment (aucun numéro attribué, pour éviter un doublon).")
-                         st.stop()
-                     
+
+                if fong_read_ok:
                      if not next_start:
                          next_start = f"{prefix}0001"
                      
@@ -3657,6 +3677,10 @@ elif nav_mode == "📊 Tableau de Bord":
                             st.write(f"- {err}")
                 
                 if success_log:
+                    # Les numéros viennent d'entrer dans Notion : le « dernier n° » mis en
+                    # cache (10 min) est périmé. Sans ce vidage, un 2e lot généré dans la
+                    # foulée repartirait de l'ancien dernier n° → doublons de fongarium.
+                    get_last_fongarium_number_v2.clear()
                     st.success(f"✅ {len(success_log)} observations importées avec succès !")
                     with st.expander("📋 Voir la liste des imports réussis", expanded=True):
                         # Display as a clean Markdown list with links

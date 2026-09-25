@@ -63,6 +63,29 @@ def suggest_fongarium_prefix(name: str | None, taken=None) -> str:
     return base
 
 
+def is_unknown_select_option_error(status_code, body, property_name="Mycologue") -> bool:
+    """Vrai si Notion a REFUSÉ un filtre ``select equals`` parce que la valeur
+    n'est pas (encore) une option de ``property_name``.
+
+    Cas du nouveau membre : son nom n'est pas une option du select « Mycologue »
+    tant que son premier import ne l'a pas créée. Notion ne rend alors pas
+    « 0 ligne » mais un 400 ``validation_error`` (mesuré le 2026-09-25) :
+    ``select option "X" not found for property "Mycologue". Available options: …``.
+    Ce refus veut dire « aucune page pour ce nom », pas « Notion est en panne ».
+    Tout autre échec (429, timeout, autre 400) reste un vrai échec.
+    """
+    if status_code != 400 or not isinstance(body, dict):
+        return False
+    if body.get("code") != "validation_error":
+        return False
+    msg = body.get("message") or ""
+    return (
+        "select option" in msg
+        and "not found" in msg
+        and f'for property "{property_name}"' in msg
+    )
+
+
 def compute_next_fongarium(prefix, notion_last_num=0, floor=0, pad=4):
     """Calcule ``(dernier_code, prochain_code)`` en respectant un **plancher**.
 
