@@ -1495,8 +1495,8 @@ elif nav_mode == "ℹ️ Aide & Codes":
         pd.DataFrame([
             {"Code": "*FSL01", "Effet": "Station d'inventaire (+ Projet déduit du préfixe, ex. FSL)"},
             {"Code": "#coll  ou  *coll", "Effet": "Coche « Fongarium » (spécimen récolté)"},
-            {"Code": "!CODE", "Effet": "Habitat général (ex. !BOM)"},
-            {"Code": "$CODE", "Effet": "Substrat (ex. $BMC)"},
+            {"Code": "!CODE", "Effet": "Habitat général (ex. !MIX)"},
+            {"Code": "$CODE", "Effet": "Substrat (ex. $BOM)"},
             {"Code": "#CODE", "Effet": "Végétation / plante associée (ex. #BOJ)"},
             {"Code": "##CODE", "Effet": "Hôte-substrat : la plante sur/dans laquelle pousse le champignon"},
             {"Code": "Nom en clair", "Effet": "Végétation reconnue par son nom (fr / latin / anglais) — ex. Bouleau jaune"},
@@ -1509,9 +1509,9 @@ elif nav_mode == "ℹ️ Aide & Codes":
         "compte). C'est pourquoi les stations utilisent `*` et non `@`."
     )
     st.caption(
-        "Exemple complet dans une note iNat : `*FSL01 #coll $BMC !BOM ##BOJ` → "
-        "station FSL01 + projet FSL, coché Fongarium, substrat BMC, habitat BOM, "
-        "hôte bouleau jaune."
+        "Exemple complet dans une note iNat : `*FSL01 #coll $BOM !MIX ##BOJ` → "
+        "station FSL01 + projet FSL, coché Fongarium, substrat BOM (bois mort), "
+        "habitat MIX (forêt mixte), hôte bouleau jaune."
     )
 
     st.divider()
@@ -3063,7 +3063,7 @@ elif nav_mode == "📊 Tableau de Bord":
         with col_restore_lbl:
             st.caption(
                 "La colonne Description est éditable directement dans le tableau ci-dessous — "
-                "ajoute ou corrige tes codes (*FSL01, #BOJ, !BOM, $BMC, #coll, etc.) avant l'import. "
+                "ajoute ou corrige tes codes (*FSL01, #BOJ, !MIX, $BOM, #coll, etc.) avant l'import. "
                 "Le bouton ci-contre restaure le contenu original iNat pour toutes les obs cochées Import?."
             )
         with col_restore_btn:
@@ -3100,7 +3100,7 @@ elif nav_mode == "📊 Tableau de Bord":
         with col_bulk_desc:
             bulk_desc_token = st.text_input(
                 "Code ou texte à ajouter aux obs cochées (Import?)",
-                placeholder="ex: *FSL01  #BOJ  !BOM  $BMC  #coll …",
+                placeholder="ex: *FSL01  #BOJ  !MIX  $BOM  #coll …",
                 key="bulk_desc_token_input",
             )
         with col_bulk_pre:
@@ -3191,7 +3191,7 @@ elif nav_mode == "📊 Tableau de Bord":
                     width="large",
                     help=(
                         "Description iNat (copie du champ Notes). Éditable : tu peux ajouter "
-                        "ou corriger les codes (*FSL01, #BOJ, !BOM, $BMC, #coll, etc.) "
+                        "ou corriger les codes (*FSL01, #BOJ, !MIX, $BOM, #coll, etc.) "
                         "juste avant l'import sans modifier l'obs côté iNat. "
                         "Bouton « Restaurer depuis iNat » si tu as effacé par erreur."
                     ),
@@ -3425,7 +3425,7 @@ elif nav_mode == "📊 Tableau de Bord":
                                 props[taxon_id_key] = {"number": int(inat_taxon_id)}
 
                         # Description : la version éditée dans le tableau prime — permet d'ajouter
-                        # ou corriger les codes (*FSL01, #BOJ, !BOM, $BMC, etc.) juste avant l'import
+                        # ou corriger les codes (*FSL01, #BOJ, !MIX, $BOM, etc.) juste avant l'import
                         # sans devoir modifier l'obs côté iNat. Si l'utilisateur a effacé volontairement,
                         # on respecte (utiliser le bouton « Restaurer depuis iNat » pour récupérer).
                         description = (row.get("Description") or "").strip()
