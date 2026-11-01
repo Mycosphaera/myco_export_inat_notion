@@ -10,8 +10,8 @@ from enricher import parse_description_codes, lint_description_codes
 # Maps de test minimales (pas d'appel Notion).
 STATIONS = {"FSL01": "pid_station_fsl01"}
 PROJETS = {"FSL": "pid_projet_fsl"}
-HABITATS = {"BOM": "pid_hab_bom"}
-SUBSTRATS = {"BMC": "pid_sub_bmc"}
+HABITATS = {"MIX": "pid_hab_mix"}
+SUBSTRATS = {"BOM": "pid_sub_bom"}
 
 
 def _parse(desc):
@@ -43,7 +43,7 @@ def test_coll_star_ne_devient_pas_station():
 
 
 def test_pas_de_coll_par_defaut():
-    assert _parse("*FSL01 $BMC").get("has_coll") is False
+    assert _parse("*FSL01 $BOM").get("has_coll") is False
 
 
 # ── Non-régression : le reste de la convention marche toujours ───────────────
@@ -57,11 +57,11 @@ def test_station_et_projet_deduit():
 
 def test_combo_realiste():
     # Une note terrain typique : station + collection + substrat.
-    r = _parse("*FSL01 #coll $BMC !BOM")
+    r = _parse("*FSL01 #coll $BOM !MIX")
     assert r.get("station_code") == "FSL01"
     assert r.get("has_coll") is True
-    assert "pid_sub_bmc" in r.get("substrat_page_ids", [])
-    assert "pid_hab_bom" in r.get("habitat_page_ids", [])
+    assert "pid_sub_bom" in r.get("substrat_page_ids", [])
+    assert "pid_hab_mix" in r.get("habitat_page_ids", [])
 
 
 # ── lint_description_codes : aperçu non destructif avant import ──────────────
@@ -70,10 +70,10 @@ def test_combo_realiste():
 LINT_MAPS = {
     "station_map": {"FSL01": "pid_st"},
     "station_names": {"FSL01": "Forêt Seigneurie Lotbinière 01"},
-    "habitat_codes": {"BOM": "pid_h"},
-    "habitat_names": {"BOM": "Boisé mixte"},
-    "substrat_codes": {"BMC": "pid_s"},
-    "substrat_names": {"BMC": "Bois mort de conifère"},
+    "habitat_codes": {"MIX": "pid_h"},
+    "habitat_names": {"MIX": "Forêt mixte"},
+    "substrat_codes": {"BOM": "pid_s"},
+    "substrat_names": {"BOM": "Bois mort"},
     "vegetation_code_map": {"BOJ": "pid_v"},
     "vegetation_code_names": {"BOJ": "Betula alleghaniensis"},
     "vegetation_map": {"acer saccharum": "pid_acer"},
@@ -115,6 +115,19 @@ def test_lint_habitat_substrat_inconnus():
     assert types == {"habitat", "substrat"}
 
 
+def test_lint_anciens_exemples_faux_signales():
+    # Les exemples que l'app donnait jusqu'au 2026-10-12 : BOM est un code de
+    # SUBSTRAT (bois mort), pas d'habitat, et BMC n'existe nulle part. Le signe
+    # départage : !BOM ne résout jamais un habitat, même si BOM est un substrat.
+    r = lint_description_codes("!BOM $BMC", LINT_MAPS)
+    assert r["has_issues"] is True
+    assert not r["recognized"]
+    assert {(u["token"], u["type"]) for u in r["unrecognized"]} == {
+        ("!BOM", "habitat"),
+        ("$BMC", "substrat"),
+    }
+
+
 def test_lint_texte_libre_ignore():
     # Prose descriptive normale → aucun code, aucun problème.
     r = lint_description_codes("Trouvé au sol près d'un vieux chêne", LINT_MAPS)
@@ -123,7 +136,7 @@ def test_lint_texte_libre_ignore():
 
 
 def test_lint_combo_mixte():
-    r = lint_description_codes("*FSL01 #coll $BMC !BADHAB", LINT_MAPS)
+    r = lint_description_codes("*FSL01 #coll $BOM !BADHAB", LINT_MAPS)
     assert r["has_issues"] is True  # !BADHAB inconnu
     ok_types = {x["type"] for x in r["recognized"]}
     assert {"station", "fongarium", "substrat"} <= ok_types
