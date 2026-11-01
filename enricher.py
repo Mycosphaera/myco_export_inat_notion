@@ -11,8 +11,8 @@ Remplace les automations natives Notion pour :
 Convention de codes dans le champ Notes iNat (= Description rapide après import) :
   *FSL01          → Station d'inventaire (et Projet déduit du préfixe alphabétique)
   #coll / *coll   → Fongarium (checkbox) — les DEUX préfixes sont acceptés
-  !BOM            → Habitat général (via "Code terrain" de la BD Habitats)
-  $BMC            → Substrat (via "Code terrain" de la BD Substrats)
+  !MIX            → Habitat général (via "Code terrain" de la BD Habitats)
+  $BOM            → Substrat (via "Code terrain" de la BD Substrats)
   #BOJ            → Végétation (via "code_plante" de la BD Plantes)
   ##BOJ           → Hôte - substrat (via "code_plante" de la BD Plantes)
   #Acer_saccharum → Végétation (rétrocompat : nom latin avec underscore)
@@ -615,8 +615,8 @@ def parse_description_codes(
 
       *FSL01          → Station d'inventaire (+ projet déduit du préfixe alpha)
       #coll / *coll   → Fongarium (checkbox) — les deux préfixes acceptés
-      !BOM            → Habitat général (via "Code terrain")
-      $BMC            → Substrat (via "Code terrain")
+      !MIX            → Habitat général (via "Code terrain")
+      $BOM            → Substrat (via "Code terrain")
       #BOJ            → Végétation (via code_plante)
       ##BOJ           → Hôte - substrat (via code_plante)
       #Acer_saccharum → Végétation (rétrocompat nom latin avec underscore)
