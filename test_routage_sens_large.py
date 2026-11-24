@@ -58,9 +58,11 @@ PAGES = [
 
 
 def test_le_chargement_lit_la_relation_et_la_demande_par_son_id():
-    cartes, demandes = _charger("abc?", PAGES)
+    # Notion rend les identifiants de colonne DÉJÀ encodés (« NmF%3F » pour « Inat Taxon ID », mesuré le 2026-11-24) :
+    # l'identifiant passe tel quel, jamais réencodé en « abc%253F » (revue CodeRabbit du 2026-11-24)
+    cartes, demandes = _charger("abc%3F", PAGES)
     assert cartes["sens_large_map"] == {STRICT: SL}
-    assert "abc%3F" in demandes[0], demandes
+    assert "abc%3F" in demandes[0] and "abc%253F" not in demandes[0], demandes
 
 
 def test_un_schema_illisible_charge_tout_au_lieu_de_perdre_le_routage():

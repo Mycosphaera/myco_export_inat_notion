@@ -30,7 +30,6 @@ aucune modification de code requise quand une nouvelle station ou un nouveau cod
 import re
 import time
 import random
-import urllib.parse
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -379,7 +378,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             if sl_id is _SCHEMA_ILLISIBLE:
                 props_to_fetch = None
             elif sl_id:
-                props_to_fetch.append(urllib.parse.quote(sl_id, safe=""))
+                props_to_fetch.append(sl_id)      # Notion le rend DÉJÀ encodé (« NmF%3F ») : jamais réencodé
             pages = _query_db_all(token, db_id, session=session, filter_properties=props_to_fetch)
             s_map, t_map, o_map, sl_map = {}, {}, {}, {}
             for p in pages:
