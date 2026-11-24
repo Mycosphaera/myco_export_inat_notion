@@ -30,6 +30,7 @@ aucune modification de code requise quand une nouvelle station ou un nouveau cod
 import re
 import time
 import random
+import urllib.parse
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -56,6 +57,11 @@ PROP_HOTE_SUBSTRAT   = "Hôte - substrat"
 PROP_FONGARIUM_CHECK = "Fongarium"
 PROP_TAXON_ID        = "Inat Taxon ID"
 PROP_PROJET          = "Projet d'inventaire"
+
+# Dans la Mycoliste : la relation d'une fiche « espèce vraie » vers sa fiche « s.l. » de MycoQuébec (décision de
+# Mathias du 2026-11-23 : « Donc comme ça on a les deux » ; « par prudence on route vers le s.l. »). Une récolte qui
+# tombe sur une fiche portant cette relation va à la fiche « s.l. » ; sans la colonne, rien ne change.
+PROP_SENS_LARGE      = "Sens large"
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +266,38 @@ def _strip_infraspecific(name: str) -> str:
 # 1. build_lookup_maps
 # ---------------------------------------------------------------------------
 
+_SCHEMA_ILLISIBLE = object()
+
+
+def _id_propriete_sens_large(token: str, db_id: str, session: requests.Session | None = None):
+    """L'id de la relation « Sens large » de la Mycoliste ; None si la colonne n'existe pas (encore) ;
+    `_SCHEMA_ILLISIBLE` si Notion ne répond pas (l'appelant charge alors toutes les propriétés)."""
+    try:
+        r = (session or requests).get(f"https://api.notion.com/v1/databases/{db_id}", headers=_headers(token), timeout=30)
+        r.raise_for_status()
+        prop = (r.json().get("properties") or {}).get(PROP_SENS_LARGE)
+    except Exception as e:  # noqa: BLE001
+        print(f"[Notion] Schéma de la Mycoliste illisible ({e}) : toutes les propriétés sont chargées")
+        return _SCHEMA_ILLISIBLE
+    return prop["id"] if prop and prop.get("type") == "relation" else None
+
+
+def sens_large_de(props: dict) -> str | None:
+    """La fiche « s.l. » vers laquelle pointe la relation « Sens large » d'une fiche de la Mycoliste, ou None.
+    Une seule cible exigée : deux « s.l. » pour une même espèce, c'est ambigu, la récolte n'est pas déplacée."""
+    rel = (props.get(PROP_SENS_LARGE) or {}).get("relation") or []
+    return rel[0]["id"] if len(rel) == 1 else None
+
+
+def vers_le_sens_large(pid: str | None, sens_large_map: dict | None) -> str | None:
+    """La règle de routage (Mathias, 2026-11-23) : une récolte qui tombe sur une fiche « espèce vraie » va à sa fiche
+    « s.l. » — l'utilisateur ne sait pas qu'il existe deux taxons. Sans relation, la fiche trouvée ne change pas.
+    Une récolte déplacée ensuite sur la fiche espèce par une preuve ADN ne repasse pas par ici (rien ne la relit)."""
+    if pid and sens_large_map:
+        return sens_large_map.get(pid, pid)
+    return pid
+
+
 def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
     """
     Charge les maps de résolution depuis Notion en parallèle.
@@ -279,6 +317,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             "species_map": {},
             "taxon_id_map": {},
             "old_names_map": {},
+            "sens_large_map": {},
             "station_map": {},
             "habitat_codes": {},
             "substrat_codes": {},
@@ -299,6 +338,7 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
         "species_map": {},
         "taxon_id_map": {},
         "old_names_map": {},
+        "sens_large_map": {},     # {fiche espèce: sa fiche « s.l. »} (relation « Sens large »)
         "station_map": {},
         "habitat_codes": {},
         "substrat_codes": {},
@@ -332,8 +372,16 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
             # Si Notion recycle ces IDs → _query_db_all fait automatiquement un fallback
             # sans filter_properties (cf. signature de _query_db_all).
             props_to_fetch = ["title", "NmF%3F", "%3C~w%5C"]
+            # La relation « Sens large » (elle peut ne pas exister encore) : son id se lit dans le schéma. Schéma
+            # illisible → toutes les propriétés, plutôt qu'un routage perdu en silence (la récolte irait à la fiche
+            # espèce au lieu du « s.l. »).
+            sl_id = _id_propriete_sens_large(token, db_id, session)
+            if sl_id is _SCHEMA_ILLISIBLE:
+                props_to_fetch = None
+            elif sl_id:
+                props_to_fetch.append(urllib.parse.quote(sl_id, safe=""))
             pages = _query_db_all(token, db_id, session=session, filter_properties=props_to_fetch)
-            s_map, t_map, o_map = {}, {}, {}
+            s_map, t_map, o_map, sl_map = {}, {}, {}, {}
             for p in pages:
                 pid = p["id"]
                 props = p["properties"]
@@ -346,8 +394,11 @@ def build_lookup_maps(token: str, db_ids: dict | None = None) -> dict:
                     for part in re.split(r"[,;]", old_name_raw):
                         part = part.strip()
                         if part: o_map[_normalize(part)] = pid
-            print(f"[Notion] Mycoliste chargée : {len(s_map)} taxons en {time.time()-start_t:.1f}s")
-            return {"species_map": s_map, "taxon_id_map": t_map, "old_names_map": o_map}
+                sl = sens_large_de(props)
+                if sl: sl_map[pid] = sl
+            print(f"[Notion] Mycoliste chargée : {len(s_map)} taxons en {time.time()-start_t:.1f}s"
+                  + (f", {len(sl_map)} fiche(s) routée(s) vers leur « s.l. »" if sl_map else ""))
+            return {"species_map": s_map, "taxon_id_map": t_map, "old_names_map": o_map, "sens_large_map": sl_map}
         except Exception as e:
             print(f"[Notion] Erreur Mycoliste: {e}")
             return {"error": f"Mycoliste: {e}"}
@@ -885,6 +936,20 @@ def match_species(
     taxon_id: int | None = None,
     taxon_id_map: dict | None = None,
     old_names_map: dict | None = None,
+    sens_large_map: dict | None = None,
+) -> str | None:
+    """La fiche de la Mycoliste d'une récolte (cinq niveaux, cf. `_match_species_brut`), puis le routage vers le
+    « s.l. » (`vers_le_sens_large`) — quel que soit le niveau qui a trouvé, par l'identifiant ou par le nom."""
+    pid = _match_species_brut(taxon_name, species_map, taxon_id, taxon_id_map, old_names_map)
+    return vers_le_sens_large(pid, sens_large_map)
+
+
+def _match_species_brut(
+    taxon_name: str,
+    species_map: dict,
+    taxon_id: int | None = None,
+    taxon_id_map: dict | None = None,
+    old_names_map: dict | None = None,
 ) -> str | None:
     """
     Résolution en 5 niveaux, du plus fiable au plus approximatif :
@@ -980,7 +1045,8 @@ def resolve_and_update_relations(
         vegetation_map, projet_map,
         vegetation_code_map, vegetation_fr_map, vegetation_en_map,
     )
-    species_id = match_species(taxon_name, species_map, taxon_id, taxon_id_map, old_names_map)
+    species_id = match_species(taxon_name, species_map, taxon_id, taxon_id_map, old_names_map,
+                               maps.get("sens_large_map"))
 
     props: dict = {}
     log: list   = []
