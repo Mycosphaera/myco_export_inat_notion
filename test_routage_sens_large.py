@@ -37,42 +37,67 @@ def test_la_relation_se_lit_et_une_double_cible_ne_route_pas():
     assert enricher.sens_large_de({"Sens large": {"relation": []}}) is None and enricher.sens_large_de({}) is None
 
 
-def _charger(id_relation, pages):
+def _charger(schema, pages):
     """`build_lookup_maps` avec la Mycoliste seule, Notion remplacé. → (cartes, filter_properties demandés)."""
     demandes = []
-    gardes = (enricher._query_db_all, enricher._id_propriete_sens_large)
-    enricher._id_propriete_sens_large = lambda token, db_id, session=None: id_relation
+    gardes = (enricher._query_db_all, enricher._schema_mycoliste)
+    enricher._schema_mycoliste = lambda token, db_id, session=None: schema
     enricher._query_db_all = lambda token, db_id, session=None, filter_properties=None: demandes.append(filter_properties) or pages
     try:
         return enricher.build_lookup_maps("jeton", {"mycoliste": "M"}), demandes
     finally:
-        enricher._query_db_all, enricher._id_propriete_sens_large = gardes
+        enricher._query_db_all, enricher._schema_mycoliste = gardes
 
 
-PAGES = [
-    {"id": STRICT, "properties": {"Nom latin": {"type": "title", "title": [{"plain_text": "Scutellinia scutellata"}]},
-                                  "Inat Taxon ID": {"type": "number", "number": 49137},
-                                  "Sens large": {"type": "relation", "relation": [{"id": SL}]}}},
-    {"id": SL, "properties": {"Nom latin": {"type": "title", "title": [{"plain_text": "Scutellinia scutellata s.l."}]}}},
-]
+SCHEMA = {"Sens large": {"id": "mJkf", "type": "relation"}, "Statut nomenclatural": {"id": "st%3A", "type": "select"}}
 
 
-def test_le_chargement_lit_la_relation_et_la_demande_par_son_id():
-    # Notion rend les identifiants de colonne DÉJÀ encodés (« NmF%3F » pour « Inat Taxon ID », mesuré le 2026-11-24) :
-    # l'identifiant passe tel quel, jamais réencodé en « abc%253F » (revue CodeRabbit du 2026-11-24)
-    cartes, demandes = _charger("abc%3F", PAGES)
+def _page(pid, titre, sens_large=(), statut=None, nom_colonne="Sens large"):
+    props = {"Nom latin": {"id": "title", "type": "title", "title": [{"plain_text": titre}]}}
+    if sens_large:
+        props[nom_colonne] = {"id": "mJkf", "type": "relation", "relation": [{"id": c} for c in sens_large]}
+    if statut:
+        props["Statut nomenclatural"] = {"id": "st%3A", "type": "select", "select": {"name": statut}}
+    return {"id": pid, "properties": props}
+
+
+PAGES = [_page(STRICT, "Scutellinia scutellata", [SL]), _page(SL, "Scutellinia scutellata s.l.")]
+
+
+def test_le_chargement_demande_la_relation_par_son_id_tel_quel():
+    # Notion rend les identifiants DÉJÀ encodés (« NmF%3F », mesuré le 2026-11-24) : passés tels quels, jamais réencodés
+    cartes, demandes = _charger({**SCHEMA, "Statut nomenclatural": {"id": "st%3A"}}, PAGES)
     assert cartes["sens_large_map"] == {STRICT: SL}
-    assert "abc%3F" in demandes[0] and "abc%253F" not in demandes[0], demandes
+    assert "mJkf" in demandes[0] and "st%3A" in demandes[0] and "st%253A" not in demandes[0], demandes
 
 
-def test_un_schema_illisible_charge_tout_au_lieu_de_perdre_le_routage():
+def test_une_colonne_renommee_route_encore():
+    # rename-proof (AGENTS.md § 7.2 du portail) : la colonne se retrouve par son identifiant, pas par son nom
+    schema = {"Sens large (s.l.)": {"id": "mJkf", "type": "relation"}}
+    pages = [_page(STRICT, "Scutellinia scutellata", [SL], nom_colonne="Sens large (s.l.)"), _page(SL, "S. s.l.")]
+    cartes, demandes = _charger(schema, pages)
+    assert cartes["sens_large_map"] == {STRICT: SL} and "mJkf" in demandes[0]
+
+
+def test_un_schema_illisible_charge_tout_et_le_dit():
     cartes, demandes = _charger(enricher._SCHEMA_ILLISIBLE, PAGES)
     assert demandes[0] is None and cartes["sens_large_map"] == {STRICT: SL}
+    assert any("schéma illisible" in e for e in cartes["_errors"])
 
 
 def test_sans_la_colonne_la_carte_est_vide():
-    cartes, demandes = _charger(None, [PAGES[1]])
+    cartes, demandes = _charger({}, [PAGES[1]])
     assert cartes["sens_large_map"] == {} and demandes[0] == ["title", "NmF%3F", "%3C~w%5C"]
+
+
+def test_une_cible_morte_ou_double_ne_route_pas_et_le_dit():
+    pages = [_page(STRICT, "Scutellinia scutellata", [SL]), _page(SL, "S. s.l. (fusionnée)", statut="Ancien nom"),
+             _page("p-double", "Xus yus", [SL, "p-autre-sl"]), _page("p-orpheline", "Xus zus", ["page-archivee"]),
+             _page("p-autre-sl", "Xus s.l.")]
+    cartes, _ = _charger(SCHEMA, pages)
+    assert cartes["sens_large_map"] == {}, cartes["sens_large_map"]
+    avert = " ".join(cartes["_errors"])
+    assert "p-double" in avert and "page-archivee" in avert and SL in avert
 
 
 def test_la_relation_espece_ecrite_porte_la_fiche_sl():
