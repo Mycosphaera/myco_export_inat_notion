@@ -1058,6 +1058,7 @@ def resolve_and_update_relations(
     db_props_schema: dict | None = None,
     taxon_id: int | None = None,
     session: requests.Session | None = None,
+    espece_actuelle: list | None = None,
 ) -> tuple[bool, str]:
     """
     Résout les relations pour une observation Notion et met à jour la page.
@@ -1090,8 +1091,13 @@ def resolve_and_update_relations(
         vegetation_map, projet_map,
         vegetation_code_map, vegetation_fr_map, vegetation_en_map,
     )
-    species_id = match_species(taxon_name, species_map, taxon_id, taxon_id_map, old_names_map,
-                               maps.get("sens_large_map"))
+    brute = _match_species_brut(taxon_name, species_map, taxon_id, taxon_id_map, old_names_map)
+    species_id = vers_le_sens_large(brute, maps.get("sens_large_map"))
+    # Une récolte DÉJÀ rangée sur la fiche espèce (déplacée à la main, sur preuve ADN : « IL POURRA ÊTRE CHANGÉ
+    # AVEC UNE PREUVE D'adn À POSTERIORI », Mathias, 2026-11-23) y reste : le mode forcé de `batch_resolve`
+    # ne la renvoie pas au « s.l. » (revue CodeRabbit du 2026-11-24).
+    if species_id != brute and brute and brute in (espece_actuelle or []):
+        species_id = brute
 
     props: dict = {}
     log: list   = []
@@ -1212,7 +1218,8 @@ def batch_resolve(
             try:
                 ok, msg = resolve_and_update_relations(
                     page_id, taxon_name, description, maps, token, db_props_schema, 
-                    taxon_id=taxon_id, session=session
+                    taxon_id=taxon_id, session=session,
+                    espece_actuelle=[r.get("id") for r in (props.get(PROP_ESPECE, {}) or {}).get("relation") or []],
                 )
                 if ok:
                     success += 1

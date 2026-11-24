@@ -116,6 +116,53 @@ def test_la_relation_espece_ecrite_porte_la_fiche_sl():
     assert ok and ecrit[enricher.PROP_ESPECE] == {"relation": [{"id": SL}]}, ecrit
 
 
+def _resoudre(espece_actuelle):
+    """`resolve_and_update_relations` d'une récolte de l'espèce 49137, Notion remplacé. → la relation « Espèce » écrite."""
+    ecrit = {}
+
+    class Rep:
+        status_code, text = 200, ""
+
+    gardee = enricher._notion_patch_with_retry
+    enricher._notion_patch_with_retry = lambda token, page_id, props, session=None: ecrit.update(props) or Rep()
+    try:
+        cartes = {"species_map": {}, "taxon_id_map": {49137: STRICT}, "old_names_map": {}, "sens_large_map": CARTE}
+        enricher.resolve_and_update_relations("obs-1", "Scutellinia scutellata", "", cartes, "jeton", taxon_id=49137,
+                                              espece_actuelle=espece_actuelle)
+    finally:
+        enricher._notion_patch_with_retry = gardee
+    return ecrit[enricher.PROP_ESPECE]["relation"][0]["id"]
+
+
+def test_le_mode_force_ne_renvoie_pas_au_sl_une_recolte_deja_sur_la_fiche_espece():
+    # revue CodeRabbit du 2026-11-24 : une récolte déplacée sur la fiche espèce par une preuve ADN y reste
+    assert _resoudre([STRICT]) == STRICT
+    assert _resoudre([]) == SL and _resoudre(None) == SL and _resoudre([AUTRE]) == SL
+
+
+def test_l_adresse_envoyee_porte_les_identifiants_tels_quels():
+    # revue CodeRabbit du 2026-11-24 : vérifier l'adresse réellement envoyée, pas seulement la liste demandée
+    adresses = []
+
+    class Rep:
+        status_code = 200
+
+        def json(self):
+            return {"results": [], "has_more": False}
+
+        def raise_for_status(self):
+            pass
+
+    class Session:
+        def post(self, url, *a, **k):
+            adresses.append(url)
+            return Rep()
+
+    enricher._query_db_all("jeton", "M", session=Session(), filter_properties=["title", "NmF%3F", "mJkf", "II~F"])
+    assert "filter_properties=NmF%3F" in adresses[0] and "filter_properties=mJkf" in adresses[0]
+    assert "%253F" not in adresses[0], adresses[0]
+
+
 # ── Runner autonome (sans pytest) ────────────────────────────────────────────
 
 if __name__ == "__main__":
